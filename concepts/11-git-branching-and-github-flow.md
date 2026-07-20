@@ -44,6 +44,19 @@ blocking direct pushes, requiring a pull request first, requiring CI to pass bef
 etc. Without it, a branching strategy is just a convention anyone (including future-me, in a
 hurry) can accidentally skip. With it, the platform refuses the shortcut.
 
+We set `main` to require a pull request (with 0 mandatory reviewer approvals, since it's solo —
+you can still self-merge) plus passing `lint` and `test` CI checks, and to reject force-pushes
+and branch deletion.
+
+**One real nuance, confirmed by actually testing it**: repo owners/admins can bypass branch
+protection by default (GitHub prints "Bypassed rule violations" on the push rather than
+rejecting it) unless "enforce for administrators" is explicitly turned on. We left that off —
+so protection genuinely blocks anyone else (or a bot, or a future collaborator) from pushing
+straight to `main`, while still letting the owner push directly in a real emergency. That's a
+deliberate tradeoff, not an oversight: turning `enforce_admins` on would mean even routing a
+one-line typo fix through a full PR — reasonable for a team, arguably excessive friction for a
+solo owner who already knows the rules exist for everyone else.
+
 ## Related
 
 - `.github/workflows/ci.yml` — the automated check that a PR must pass before merging.
