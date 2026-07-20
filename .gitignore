@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Data (large / regenerable — see data/README.md for how to fetch it).
+# Raw datasets live outside the repo at ~/.sentinel/data/, never here — this only
+# guards against someone accidentally dropping a raw file into ./data/ locally.
+data/*.csv
+data/*.parquet
+data/*.txt
+
+# Terraform
+terraform/**/.terraform/
+terraform/**/*.tfstate
+terraform/**/*.tfstate.*
+terraform/**/.terraform.lock.hcl
+
+# Helm
+charts/**/charts/
+charts/**/*.tgz
+
+# IDE / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Logs
+*.log
