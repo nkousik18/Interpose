@@ -19,5 +19,6 @@ concept was introduced.
 | 10 | [open-data-licensing.md](10-open-data-licensing.md) | Public domain vs. CC-BY vs. CDLA-Sharing, and why we had to correct the scoping doc |
 | 11 | [git-branching-and-github-flow.md](11-git-branching-and-github-flow.md) | Trunk-based vs. GitHub Flow vs. GitFlow, why we chose GitHub Flow, what branch protection does |
 | 12 | [oss-community-health-files.md](12-oss-community-health-files.md) | CONTRIBUTING/CODE_OF_CONDUCT/SECURITY/CHANGELOG/templates, and what CI actually enforces |
+| 13 | [session-continuity-and-progress-logs.md](13-session-continuity-and-progress-logs.md) | Why `docs/project/SESSION_LOG.md` exists, how it differs from CLAUDE.md/ROADMAP/CHANGELOG, and ADRs as a related pattern |
 
 More get added as we build — each new one lands here the day it's created.
