@@ -1,4 +1,4 @@
-# Sentinel: what it is and why it's shaped this way
+# Interpose: what it is and why it's shaped this way
 
 ## The problem, in plain terms
 
@@ -13,7 +13,7 @@ questions MCP itself never answers:
    responder asks "what did this agent do and why," there needs to be a trustworthy record —
    not just application logs someone could have edited after the fact.
 
-Sentinel answers both by sitting *between* the agent (MCP client) and the real tool servers
+Interpose answers both by sitting *between* the agent (MCP client) and the real tool servers
 (MCP servers), as a transparent proxy: from the agent's point of view it looks like a normal
 MCP server; from the real tool server's point of view it looks like a normal MCP client. Every
 call passes through it.
@@ -40,9 +40,9 @@ Three deliberate choices, each for a reason:
   it. A proxy sitting on the network path governs *any* MCP client, regardless of what agent
   framework built it — which matters a lot for an enterprise that has many teams building
   agents independently and wants one governance point, not N.
-- **Transparent, not a fork/extension of MCP**: Sentinel doesn't add custom fields to the MCP
+- **Transparent, not a fork/extension of MCP**: Interpose doesn't add custom fields to the MCP
   protocol or require servers to know about it. That's what "transparent" means here — neither
-  side has to change for Sentinel to work. That keeps it usable with *any* MCP server or client
+  side has to change for Interpose to work. That keeps it usable with *any* MCP server or client
   that already exists.
 - **Deny/allow/redact/hold as first-class policy outcomes**: chosen because these map directly
   to what a real compliance or platform team already thinks in terms of — "who can do what,"
@@ -51,7 +51,7 @@ Three deliberate choices, each for a reason:
 
 ## The three "planes"
 
-The scoping doc splits Sentinel's internals into three planes with very different speed
+The scoping doc splits Interpose's internals into three planes with very different speed
 requirements — this shows up constantly, so it's worth having the mental model early:
 
 - **Data plane**: the actual proxying, on the hot path of every single call. Needs to be fast
@@ -70,7 +70,7 @@ tool invocation) while still getting the benefit of slower, smarter analysis els
 
 ## The demo: why AML specifically
 
-Sentinel-the-gateway is domain-agnostic — it would work equally well in front of tools for
+Interpose-the-gateway is domain-agnostic — it would work equally well in front of tools for
 customer support, DevOps, or anything else. The project picks **AML (anti-money-laundering)**
 as the one worked example because it's a domain where "an AI agent took an action and we need
 to prove why" is an unusually concrete, high-stakes, real-world need — which makes for a

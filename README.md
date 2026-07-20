@@ -1,4 +1,4 @@
-# Sentinel
+# Interpose
 
 An open-source audit and policy gateway for [MCP](https://modelcontextprotocol.io) (Model
 Context Protocol) — it sits between AI agents and the MCP tool servers they call, enforcing
@@ -10,17 +10,17 @@ shows the whole system working end-to-end.
 
 ## Why this exists
 
-Full context and rationale live in `docs/SENTINEL_SCOPING.md`. Short version: AI agents are
+Full context and rationale live in `docs/INTERPOSE_SCOPING.md`. Short version: AI agents are
 increasingly given the ability to call real-world tools (send money, query databases, file
 tickets). MCP standardizes *how* agents call those tools, but says nothing about *whether a
-given call should be allowed*, *who approved it*, or *what happened*, after the fact. Sentinel
+given call should be allowed*, *who approved it*, or *what happened*, after the fact. Interpose
 is a transparent proxy that adds that governance layer without requiring agents or tool servers
 to change.
 
 ## Repo layout
 
 ```
-src/sentinel/        # the gateway service (proxy, policy engine, audit store, control-plane agents)
+src/interpose/        # the gateway service (proxy, policy engine, audit store, control-plane agents)
 mcp-servers/          # demo MCP servers used by the AML walkthrough
 agents/                # demo LangGraph investigation agent
 policies/packs/aml/    # example policy pack

@@ -25,12 +25,12 @@ other systems, each via a "provider" plugin.
   the plan (Section 14.8, Phase 4) is explicitly: `terraform apply` → smoke test → `terraform
   destroy`, not "leave a cluster running for a month."
 
-## Where it fits in Sentinel specifically
+## Where it fits in Interpose specifically
 
 Terraform's job here is narrow and specific: provision a **real AWS EKS cluster** (Elastic
 Kubernetes Service — Amazon's managed Kubernetes) — the production-shaped counterpart to the
 local `kind` cluster we already tested (see [[07-what-is-kubernetes]]). Terraform doesn't
-deploy Sentinel itself onto that cluster — that's Helm's job, layered on top once the cluster
+deploy Interpose itself onto that cluster — that's Helm's job, layered on top once the cluster
 exists. Two different tools, two different layers: Terraform answers "does the cluster exist,"
 Helm answers "what's running inside it."
 

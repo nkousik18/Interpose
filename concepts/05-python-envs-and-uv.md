@@ -36,7 +36,7 @@ venv + pip, or conda doing both its own way). `uv` does both jobs itself, and do
 - **Reproducibility**: anyone (including future-you, on a different machine) who clones this
   repo and runs `uv sync` gets the identical Python version and identical package versions —
   no "works on my machine" drift.
-- **Isolation**: nothing we install for Sentinel touches your system Python, conda, or pyenv
+- **Isolation**: nothing we install for Interpose touches your system Python, conda, or pyenv
   setups, and vice versa.
 - **It's simply what most modern Python projects use now.** Worth being able to say in an
   interview: "I used `uv` for dependency and environment management" is a current, expected

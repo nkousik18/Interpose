@@ -1,0 +1,25 @@
+name: Bug report
+description: Something isn't working the way it should
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what actually happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to reproduce the issue.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      description: Output of `git rev-parse HEAD`, or a release tag.
+    validations:
+      required: false

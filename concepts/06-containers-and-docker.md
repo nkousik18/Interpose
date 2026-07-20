@@ -14,11 +14,11 @@ faster to start than a VM.
 setup"), *ship* it (push/pull from a registry), and *run* it (a single command spins up an
 isolated instance of that image).
 
-## Why Sentinel needs it, specifically
+## Why Interpose needs it, specifically
 
 A few distinct reasons stack up:
 
-1. **Local dependencies (Postgres, Redis)**: Sentinel needs a real Postgres database and Redis
+1. **Local dependencies (Postgres, Redis)**: Interpose needs a real Postgres database and Redis
    instance to develop against. Rather than installing and configuring those directly on your
    Mac, we'll run them as containers — identical setup to what production would look like,
    disposable, and gone the moment we don't need them.
@@ -26,7 +26,7 @@ A few distinct reasons stack up:
    needing real physical/cloud machines to form a Kubernetes cluster, `kind` runs each cluster
    "node" as a Docker container on your laptop. This only works because Docker is running.
 3. **Deployment artifacts**: eventually the gateway itself, and the demo MCP servers, get
-   packaged as container images (that's what the Helm chart in `charts/sentinel/` deploys) —
+   packaged as container images (that's what the Helm chart in `charts/interpose/` deploys) —
    the same image that runs in a local `kind` cluster is what would run on real AWS EKS later.
 
 ## The daemon vs. the CLI

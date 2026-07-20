@@ -14,7 +14,7 @@ the transport. Two matter for us:
   network involved at all. This is what `examples/hello-mcp-echo/client.py` used: it started
   `server.py` itself as a child process.
 - **Streamable HTTP**: client and server are separate processes (possibly on separate
-  machines), talking over a normal HTTP connection. This is what Sentinel's gateway will use in
+  machines), talking over a normal HTTP connection. This is what Interpose's gateway will use in
   production — the gateway can't be a subprocess of every agent that talks to it.
 
 The scoping doc's decision (Section 6.17) is "Streamable HTTP first, stdio in v0.2 for local
@@ -44,8 +44,8 @@ returned exactly the text we sent, unchanged.
 
 ## Why this was worth doing before writing any gateway code
 
-Sentinel's entire job is to sit *between* an exchange like this one — impersonating a server to
-the real client, and a client to the real server, without either side needing to know Sentinel
+Interpose's entire job is to sit *between* an exchange like this one — impersonating a server to
+the real client, and a client to the real server, without either side needing to know Interpose
 is there. Having actually run a real client and real server talking directly to each other
 first means we now know what "normal" looks like, which makes it much easier to tell, once the
 gateway exists, whether it's faithfully proxying that exchange or subtly breaking it.
@@ -53,4 +53,4 @@ gateway exists, whether it's faithfully proxying that exchange or subtly breakin
 ## Related
 
 - [[01-what-is-mcp]]
-- [[02-sentinel-gateway-overview]]
+- [[02-interpose-gateway-overview]]

@@ -15,8 +15,8 @@ It defines two roles:
 
 The protocol itself is just the wire format and handshake — how a client discovers tools, how
 it calls one, how results and errors come back. It says nothing about *whether a given call
-should be allowed to happen*. That gap is exactly what Sentinel exists to fill — see
-[[02-sentinel-gateway-overview]].
+should be allowed to happen*. That gap is exactly what Interpose exists to fill — see
+[[02-interpose-gateway-overview]].
 
 ## Why it exists
 
@@ -29,12 +29,12 @@ of the audiences for this project, for that reason).
 
 ## Why it matters for this project
 
-Sentinel's entire reason for existing depends on one fact: MCP defines *how* a tool call
+Interpose's entire reason for existing depends on one fact: MCP defines *how* a tool call
 happens, but has no built-in concept of policy, approval, or audit trail. In a world where
 agents are given more and more ability to take real actions, "the protocol works" and "the
-protocol is safe to give production access to" are different claims. Sentinel adds the second
+protocol is safe to give production access to" are different claims. Interpose adds the second
 one without changing MCP itself or requiring agents/servers to be rewritten — which is only
-possible *because* MCP is a standard protocol with a defined wire format Sentinel can sit in
+possible *because* MCP is a standard protocol with a defined wire format Interpose can sit in
 the middle of.
 
 ## Key vocabulary
@@ -43,11 +43,11 @@ the middle of.
   `get_account_transactions`). Has a name, a description (so the LLM knows when to use it), and
   a JSON schema for its inputs.
 - **Tool call**: an agent invoking a specific tool with specific arguments. This is the unit
-  Sentinel intercepts, evaluates, and logs.
+  Interpose intercepts, evaluates, and logs.
 - **Transport**: how bytes actually move between client and server. MCP supports a couple of
   transports; the scoping doc commits to "Streamable HTTP first, stdio later" (Section 6.17) —
   we'll cover what that means concretely when we build the gateway's ingress stage.
 
 ## Related
 
-- [[02-sentinel-gateway-overview]] — what Sentinel adds on top of MCP, and why.
+- [[02-interpose-gateway-overview]] — what Interpose adds on top of MCP, and why.

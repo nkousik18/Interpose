@@ -1,6 +1,6 @@
 # Roadmap (learning-paced)
 
-The full day-by-day plan lives in `SENTINEL_SCOPING.md` Section 14 — it was written for a
+The full day-by-day plan lives in `INTERPOSE_SCOPING.md` Section 14 — it was written for a
 solo builder already fluent in this stack, moving at speed. This doc adapts the same
 sequence and the same end-of-phase gates for someone learning the stack *while* building it.
 Concretely: **same order, same milestones, no fixed days** — a "day" in Section 14 might take
@@ -17,17 +17,17 @@ pressure) is itself one of the things worth being able to talk about later.
 local Kubernetes cluster (`kind`) provisions in one command, the IBM AML dataset is downloaded
 and subsampled, and a trivial MCP server runs locally.
 
-- [x] Repo initialized, directory structure scaffolded (`src/sentinel/`, `mcp-servers/`,
+- [x] Repo initialized, directory structure scaffolded (`src/interpose/`, `mcp-servers/`,
       `agents/`, `charts/`, `terraform/`, `policies/`, `tests/`).
 - [x] `CLAUDE.md` and `concepts/` established as working conventions.
 - [x] Local dev environment: Python 3.12 via `uv`, Docker, `kubectl`, `helm`, `terraform`.
 - [x] `kind` installed; a test cluster provisions and tears down successfully.
 - [x] IBM AML dataset downloaded (HI-Medium: 31.9M transaction rows, ~2.8GB). Subsampling to ~500K accounts is still pending (needs Spark/PySpark set up first).
-- [x] OFAC sanctions list downloaded and parsed (19,169 entries, `~/.sentinel/data/ofac-sdn/sdn.csv`).
+- [x] OFAC sanctions list downloaded and parsed (19,169 entries, `~/.interpose/data/ofac-sdn/sdn.csv`).
 - [x] MCP Python SDK explored; a trivial "echo" MCP server built and run locally (`examples/hello-mcp-echo/`).
-- [ ] GitHub Actions CI skeleton (lint + test jobs against an empty test file).
+- [x] GitHub Actions CI skeleton (lint + test jobs, `.github/workflows/ci.yml`).
 
-**Gate:** all boxes above checked.
+**Gate:** all boxes above checked except AML subsampling — remaining Phase 0 work.
 
 ## Phase 1 — Foundation
 
@@ -38,7 +38,7 @@ Covers: FastAPI gateway request lifecycle, the policy engine (allowlist/denylist
 start, then PII redaction + HITL stubs), Postgres audit schema and hash chaining, an
 integration test suite (docker-compose: Postgres + Redis + gateway + a mock upstream server).
 
-**Gate:** a LangGraph agent makes a tool call through Sentinel to a real MCP server; policy
+**Gate:** a LangGraph agent makes a tool call through Interpose to a real MCP server; policy
 fires; a hash-chained audit entry is written and verifiable.
 
 ## Phase 2 — Governance
@@ -47,7 +47,7 @@ fires; a hash-chained audit entry is written and verifiable.
 LangGraph control-plane agents are running; the full stack deploys to a local `kind` cluster
 via Helm.
 
-Covers: Redis-backed HITL ticket queue, `sentinel review` CLI, the 5-agent control plane
+Covers: Redis-backed HITL ticket queue, `interpose review` CLI, the 5-agent control plane
 (Supervisor, Policy Evaluator, Anomaly Detector, Evidence Composer, Incident Escalator), Helm
 chart + `scripts/dev-up.sh`, first distributed trace visible in Jaeger.
 
@@ -57,7 +57,7 @@ manual approval; hash chain verifies; control-plane agents produce enriched deci
 ## Phase 3 — AML Pack
 
 **Goal (Section 14.7):** the demo comes alive — the AML investigation agent runs a full
-investigation through Sentinel, including a HITL hold/resume, and Spark aggregates the
+investigation through Interpose, including a HITL hold/resume, and Spark aggregates the
 resulting audit data into dashboards.
 
 Covers: OFAC sanctions MCP server, transaction-graph MCP server (DuckDB over the subsampled AML

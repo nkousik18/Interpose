@@ -13,7 +13,7 @@ memory") and Kubernetes continuously works to make reality match that descriptio
 The name gets shortened to "K8s" because there are 8 letters between the K and the s —
 that's a real, if slightly silly, convention worth knowing.
 
-## Why Sentinel needs it
+## Why Interpose needs it
 
 The scoping doc targets Kubernetes as the deployment platform (Section 6.11) because it's the
 default assumption at essentially every enterprise the project targets (Section 3's "Room 2" —
@@ -42,9 +42,9 @@ directly one of the three named resume-gap items the whole project exists to clo
 ## What we just verified, concretely
 
 ```
-kind create cluster --name sentinel-smoketest   # spun up a real (if tiny) K8s cluster in Docker
+kind create cluster --name interpose-smoketest   # spun up a real (if tiny) K8s cluster in Docker
 kubectl get nodes                                # confirmed the control plane came up, Ready
-kind delete cluster --name sentinel-smoketest    # tore it down again, cleanly
+kind delete cluster --name interpose-smoketest    # tore it down again, cleanly
 ```
 
 That loop — create, inspect, destroy — is the same loop we'll run constantly during

@@ -14,7 +14,7 @@ venv/
 !.env.example
 
 # Data (large / regenerable — see data/README.md for how to fetch it).
-# Raw datasets live outside the repo at ~/.sentinel/data/, never here — this only
+# Raw datasets live outside the repo at ~/.interpose/data/, never here — this only
 # guards against someone accidentally dropping a raw file into ./data/ locally.
 data/*.csv
 data/*.parquet

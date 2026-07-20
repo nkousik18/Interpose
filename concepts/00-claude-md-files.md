@@ -35,7 +35,7 @@ Two reasons, matching the two things this project is for:
   `terraform/` with Terraform-specific conventions) — Claude Code picks up the ones relevant to
   where it's working. We're not doing that yet; the root file is enough until the project has
   enough distinct sub-areas to justify it. We'll add scoped ones when that becomes true (likely
-  once `terraform/`, `charts/`, and `src/sentinel/control_plane/` each have their own real
+  once `terraform/`, `charts/`, and `src/interpose/control_plane/` each have their own real
   conventions worth stating).
 - **It's not enforcement.** Nothing *forces* Claude to obey it — it's a strong instruction, not
   a hard constraint, the same way an onboarding doc doesn't stop a new hire from cutting a

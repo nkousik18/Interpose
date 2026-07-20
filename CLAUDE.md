@@ -1,14 +1,14 @@
-# Sentinel — project instructions for Claude Code
+# Interpose — project instructions for Claude Code
 
 ## What this project is
 
-Sentinel is an MCP (Model Context Protocol) audit/policy gateway with a demo AML policy pack.
-Full spec: `docs/SENTINEL_SCOPING.md`. Execution plan: `docs/ROADMAP.md`.
+Interpose is an MCP (Model Context Protocol) audit/policy gateway with a demo AML policy pack.
+Full spec: `docs/INTERPOSE_SCOPING.md`. Execution plan: `docs/ROADMAP.md`.
 
 ## How the owner wants to work
 
 The owner (Kousik) is new to this domain (MCP, Kubernetes, LangGraph, Spark, AML/compliance)
-and is building Sentinel specifically to learn it well enough to talk about it in interviews —
+and is building Interpose specifically to learn it well enough to talk about it in interviews —
 this is a learning project first, a shipped artifact second. Timeline is flexible (~30 days,
 +/- a week); do not rush ahead of understanding to hit a date.
 
@@ -39,13 +39,13 @@ One Markdown file per concept, in `concepts/`. Rules:
 Even though this is paced for learning, code that gets written should end up production-grade
 by the end: real error handling (no bare `except:`, no silently swallowed failures), structured
 logging at the key decision points (not print statements), and test coverage per the targets in
-`docs/SENTINEL_SCOPING.md` Section 4.6. It's fine for early scaffolding to be minimal; it should
+`docs/INTERPOSE_SCOPING.md` Section 4.6. It's fine for early scaffolding to be minimal; it should
 not stay that way.
 
 ## Repo conventions
 
 - Python 3.12, managed with `uv`.
-- Module layout under `src/sentinel/` follows `docs/SENTINEL_SCOPING.md` Section 6.16 — don't
+- Module layout under `src/interpose/` follows `docs/INTERPOSE_SCOPING.md` Section 6.16 — don't
   restructure it without updating that section too.
 - Commit discipline: one meaningful commit per work session minimum (see roadmap Section
   14.11 in the scoping doc for the reasoning).

@@ -1,6 +1,6 @@
 """Minimal MCP client: launches server.py as a subprocess, connects over the stdio
 transport, discovers its tools, and calls `echo`. Proves the whole MCP round trip works
-before any Sentinel-specific code exists.
+before any Interpose-specific code exists.
 """
 
 import asyncio
@@ -23,7 +23,7 @@ async def main() -> None:
             tools = await session.list_tools()
             print(f"Discovered tools: {[t.name for t in tools.tools]}")
 
-            result = await session.call_tool("echo", {"text": "hello, sentinel"})
+            result = await session.call_tool("echo", {"text": "hello, interpose"})
             print(f"Tool result: {result.content[0].text}")
 
 

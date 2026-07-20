@@ -11,7 +11,7 @@
 - **SLI (Service Level *Indicator*)**: the actual metric you measure to know if you're hitting
   the SLO — e.g. "percentage of requests completed under 100ms."
 
-Sentinel is a portfolio project with no paying customers, so there's no real SLA here. What the
+Interpose is a portfolio project with no paying customers, so there's no real SLA here. What the
 scoping doc states are **SLOs** — internal engineering targets — even though people loosely say
 "SLA" in casual conversation. Knowing the distinction is exactly the kind of thing that reads
 as senior in an interview.
@@ -31,9 +31,9 @@ distribution instead of collapsing it into one number that erases the tail.
 "p99 < 100ms" reads as: *"99 times out of 100, this adds less than 100ms. The worst 1% might be
 slower, and here's how much slower we tolerate before it's a problem."*
 
-## Why Sentinel cares about latency at all
+## Why Interpose cares about latency at all
 
-Sentinel adds itself into the path of *every* tool call an agent makes. If it adds meaningful
+Interpose adds itself into the path of *every* tool call an agent makes. If it adds meaningful
 delay, it makes every agent workflow built on top of it slower — a bad trade for a governance
 layer whose value proposition is "you get this for basically free." The 100ms budget isn't
 arbitrary; Section 6.18 of the scoping doc breaks down exactly where that budget goes (parsing
@@ -42,5 +42,5 @@ revisit that concretely when we build the gateway's request lifecycle in Week 1.
 
 ## Related
 
-- [[02-sentinel-gateway-overview]] — the "data plane" is exactly the part this latency budget
+- [[02-interpose-gateway-overview]] — the "data plane" is exactly the part this latency budget
   applies to; the control and analytics planes are explicitly allowed to be slower.

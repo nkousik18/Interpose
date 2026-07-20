@@ -23,12 +23,12 @@ enterprise platform teams notice.
   dataset actually uses: attribution required, *plus* a **share-alike** clause — if you publish
   a dataset that's derived from data under this license, that derived dataset has to carry a
   compatible open license too. It does **not** restrict what you can build *using* the data
-  (Sentinel's code, the demo, the blog posts are all unaffected) — the share-alike obligation
+  (Interpose's code, the demo, the blog posts are all unaffected) — the share-alike obligation
   only reaches datasets you redistribute, not software.
 
 ## Why the distinction actually matters here
 
-Sentinel doesn't republish the IBM transaction data itself — the raw CSVs stay
+Interpose doesn't republish the IBM transaction data itself — the raw CSVs stay
 `.gitignore`d, never committed, and the repo only ships a small labeled synthetic adversarial
 corpus we generate ourselves (see the scoping doc's D3 dataset, Section 10.5). So the
 share-alike clause doesn't bite for the MVP as currently scoped. It *would* matter if a later
