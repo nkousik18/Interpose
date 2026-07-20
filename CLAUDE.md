@@ -5,6 +5,13 @@
 Interpose is an MCP (Model Context Protocol) audit/policy gateway with a demo AML policy pack.
 Full spec: `docs/INTERPOSE_SCOPING.md`. Execution plan: `docs/ROADMAP.md`.
 
+**Start every session by reading `docs/project/SESSION_LOG.md` (latest entries) and
+`docs/ROADMAP.md` (phase checkboxes)** before doing anything else — that's where things
+actually stopped last time and what's next, not just which phase we're in. At the end of a
+session, or at a natural stopping point mid-session, **append** a new dated entry to
+`SESSION_LOG.md` (what happened, decisions made, current state, next steps). Append-only —
+never edit past entries. See `concepts/13-session-continuity-and-progress-logs.md` for why.
+
 ## How the owner wants to work
 
 The owner (Kousik) is new to this domain (MCP, Kubernetes, LangGraph, Spark, AML/compliance)
