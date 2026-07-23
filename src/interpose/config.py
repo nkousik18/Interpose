@@ -16,6 +16,11 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://interpose:interpose_dev@localhost:5433/interpose"
     redis_url: str = "redis://localhost:6379/0"
+    # Anthropic Claude is the eventual default per Section 6.4; Groq is configured for
+    # now because it has a genuinely free tier, and the scoping doc names it as an
+    # anticipated alternative provider. See concepts/24-narrative-generation-with-a-real-llm.md.
+    groq_api_key: str | None = None
+    groq_model: str = "openai/gpt-oss-20b"
 
 
 @lru_cache

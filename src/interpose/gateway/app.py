@@ -396,18 +396,6 @@ async def _handle_hold(
         policies_fired=policies_fired,
         decision=_decision_payload(decision),
     )
-    await _publish_decision_event(
-        request,
-        audit_id=held.id,
-        trace_id=trace_id,
-        subject=subject,
-        session_id=session_id,
-        server_name=server_name,
-        tool_name=tool_name,
-        args_hash=args_hash,
-        policies_fired=policies_fired,
-        decision_payload=_decision_payload(decision),
-    )
     ticket = await hitl.create_ticket(
         redis_conn,
         server=server_name,
@@ -419,6 +407,19 @@ async def _handle_hold(
         audit_entry_id=held.id,
         reviewer_group=reviewer_group,
         timeout_seconds=timeout_seconds,
+    )
+    await _publish_decision_event(
+        request,
+        audit_id=held.id,
+        trace_id=trace_id,
+        subject=subject,
+        session_id=session_id,
+        server_name=server_name,
+        tool_name=tool_name,
+        args_hash=args_hash,
+        policies_fired=policies_fired,
+        decision_payload=_decision_payload(decision),
+        hitl_ticket_id=uuid.UUID(ticket.ticket_id),
     )
     logger.info(
         "gateway.hitl_held request_id=%s ticket_id=%s server=%s tool=%s reviewer_group=%s "
@@ -637,6 +638,7 @@ async def _publish_decision_event(
     args_hash: str,
     policies_fired: list[dict[str, str]],
     decision_payload: dict[str, Any],
+    hitl_ticket_id: uuid.UUID | None = None,
 ) -> None:
     """Publishes a DecisionEvent to the control plane (Section 7.4) -- once per
     decision-defining audit write (DENIED, HELD, or INTENT), never for the
@@ -653,6 +655,7 @@ async def _publish_decision_event(
         args_hash=args_hash,
         policies_fired=[PolicyResult(**p) for p in policies_fired],
         decision=CPDecision(**decision_payload),
+        hitl_ticket_id=hitl_ticket_id,
         timestamp=datetime.now(UTC),
     )
     await event_bus.publish(event)

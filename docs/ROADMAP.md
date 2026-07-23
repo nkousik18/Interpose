@@ -134,6 +134,23 @@ chart + `scripts/dev-up.sh`, first distributed trace visible in Jaeger.
       enrichment verified directly against real Postgres for PASS/HOLD/DENY/elevated-
       risk paths (`tests/integration/test_control_plane_graph.py`). 120 total tests
       green.
+- [x] Day 8 — Remaining control-plane agents + first real LLM integration. Provider:
+      Groq (free tier), via a provider-abstracted `interpose.control_plane.llm`
+      wrapper -- Claude remains the documented eventual default (Section 6.4), Groq is
+      an anticipated swap-in used now for cost reasons. Real structured outputs
+      (`json_schema` + `strict: true`), not prompt-and-hope JSON. Agent A2 (Anomaly
+      Detector): live agent-scoped z-score (no trained baseline exists) + a
+      repeated-denials rule; cluster-deviation (needs Spark-trained K-means) deferred.
+      Agent A3 (Evidence Composer): real evidence assembly, "prior HITL decisions" as
+      a same-agent+same-tool proxy for the doc's "similar patterns." Agent A4
+      (Incident Escalator): 3 of 4 promotion rules real; extended Day 7's graph with a
+      new A2→A4 routing hop for high-severity anomalies (the 4th rule, via A3, still
+      isn't reachable -- named gap, see concept 25). Two real bugs found only by a
+      live Groq smoke test (Groq's strict mode needs `additionalProperties: false`;
+      `gpt-oss` reasoning tokens can exhaust the budget before any output) -- both
+      fixed and covered by permanent regression tests. Added `tests/conftest.py` so
+      the automated suite never depends on a developer's local API key. 154 total
+      tests green.
 
 **Gate:** full stack deploys to `kind` via Helm; a HITL cycle completes end-to-end with a
 manual approval; hash chain verifies; control-plane agents produce enriched decision events.

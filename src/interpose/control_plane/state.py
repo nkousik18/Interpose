@@ -42,6 +42,10 @@ class DecisionEvent(BaseModel):
     args_hash: str
     policies_fired: list[PolicyResult]
     decision: Decision
+    # Set only for a HOLD outcome -- the real interpose.session.hitl ticket ID, so
+    # Agent A3's HITLPacket.ticket_id refers to the actual Redis ticket a reviewer
+    # acts on, not a disconnected identifier the control plane made up on its own.
+    hitl_ticket_id: UUID | None = None
     timestamp: datetime
 
 
