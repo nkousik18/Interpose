@@ -100,6 +100,22 @@ Covers: Redis-backed HITL ticket queue, `interpose review` CLI, the 5-agent cont
 (Supervisor, Policy Evaluator, Anomaly Detector, Evidence Composer, Incident Escalator), Helm
 chart + `scripts/dev-up.sh`, first distributed trace visible in Jaeger.
 
+- [x] Day 6 — HITL flow: Redis joins `docker-compose.yaml` (port 6379); ticket queue
+      (`interpose.session.hitl`, hash + pending-set, TTL-based expiry). `hitl_gate`
+      evaluates for real now (`Outcome.HOLD`, carrying `reviewer_group`/`timeout_seconds`)
+      instead of raising `NotImplementedError`. Gateway blocks (async, non-blocking for
+      other requests) on the held call pending a decision -- a deliberate MVP choice
+      over the scoping doc's literal "immediate held response" wording, since MCP's
+      synchronous `tools/call` has no built-in retry/resume mechanism (see concept 21).
+      `interpose review list/approve/deny` implemented. Full HITL cycle (approve, deny,
+      timeout) verified live against real Postgres + Redis
+      (`tests/integration/test_gateway_hitl.py`), each producing a linked, hash-chained
+      audit trail (`HELD` → `COMPLETED`/`DENIED`) with `hitl_reviewer`/`hitl_decision`/
+      `hitl_rationale` populated -- schema columns that existed since Day 4, unused
+      until now. Session-state hash (`interpose:session:{agent_id}`) deliberately not
+      built -- nothing reads/writes a risk score yet (Day 8's anomaly detector will).
+      81 total tests green.
+
 **Gate:** full stack deploys to `kind` via Helm; a HITL cycle completes end-to-end with a
 manual approval; hash chain verifies; control-plane agents produce enriched decision events.
 

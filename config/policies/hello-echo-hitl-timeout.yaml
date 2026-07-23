@@ -1,0 +1,15 @@
+# A very short timeout, deliberately, so the "nobody reviewed it in time" test path
+# doesn't have to wait long. See config/policies/hello-echo-hitl.yaml for the normal
+# (30s) version used by the approve/deny tests.
+policy: hello-echo-hitl-timeout-test-tool
+description: Local dev/demo policy -- holds hitl_timeout_tool with a 2s timeout.
+applies_to:
+  server: hello-echo
+  tools: [hitl_timeout_tool]
+effect:
+  type: hitl_gate
+  reviewer_group: test-reviewers
+  timeout_seconds: 2
+audit:
+  severity: medium
+  tag: [demo]

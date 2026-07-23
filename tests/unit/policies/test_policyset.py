@@ -39,19 +39,31 @@ def pii_redaction(name: str, server: str, tools: list[str]) -> Policy:
 
 
 class TestUnimplementedEffects:
-    def test_hitl_gate_raises_not_implemented(self) -> None:
-        engine = PolicyEngine([hitl_gate("h1", "transaction-graph", ["mark_investigated"])])
-        policy_set = engine.compile("transaction-graph", "mark_investigated")
-        with pytest.raises(NotImplementedError, match="hitl_gate"):
-            policy_set.evaluate(RateLimiter())
-
     def test_pii_redaction_raises_not_implemented(self) -> None:
         engine = PolicyEngine([pii_redaction("p1", "ofac-sanctions", ["check_name"])])
         policy_set = engine.compile("ofac-sanctions", "check_name")
         with pytest.raises(NotImplementedError, match="pii_redaction"):
             policy_set.evaluate(RateLimiter())
 
-    def test_denylist_still_short_circuits_before_unimplemented_hitl_gate(self) -> None:
+
+class TestHitlGate:
+    def test_matching_tool_holds_with_reviewer_group_and_timeout(self) -> None:
+        policy = hitl_gate("h1", "transaction-graph", ["mark_investigated"])
+        engine = PolicyEngine([policy])
+        policy_set = engine.compile("transaction-graph", "mark_investigated")
+        decision = policy_set.evaluate(RateLimiter())
+        assert decision.outcome == Outcome.HOLD
+        assert decision.fired_policy == "h1"
+        assert decision.reviewer_group == "aml-analysts"
+        assert decision.timeout_seconds == 3600
+
+    def test_unlisted_tool_is_unaffected(self) -> None:
+        policy = hitl_gate("h1", "transaction-graph", ["mark_investigated"])
+        engine = PolicyEngine([policy])
+        decision = engine.compile("transaction-graph", "read_balance").evaluate(RateLimiter())
+        assert decision.outcome == Outcome.PASS
+
+    def test_denylist_still_short_circuits_before_hitl_gate(self) -> None:
         policies = [
             denylist("d1", "transaction-graph", ["mark_investigated"]),
             hitl_gate("h1", "transaction-graph", ["mark_investigated"]),
@@ -61,6 +73,23 @@ class TestUnimplementedEffects:
         decision = policy_set.evaluate(RateLimiter())
         assert decision.outcome == Outcome.DENY
         assert decision.fired_policy == "d1"
+
+    def test_rate_limit_still_evaluated_before_hitl_gate(self) -> None:
+        rate_limited = rate_limit(
+            "r1", "transaction-graph", ["mark_investigated"], limit=1, window_seconds=60
+        )
+        policies = [
+            rate_limited,
+            hitl_gate("h1", "transaction-graph", ["mark_investigated"]),
+        ]
+        engine = PolicyEngine(policies)
+        policy_set = engine.compile("transaction-graph", "mark_investigated")
+        limiter = RateLimiter()
+        first = policy_set.evaluate(limiter)
+        assert first.outcome == Outcome.HOLD  # under the rate limit, falls through to hitl_gate
+        second = policy_set.evaluate(limiter)
+        assert second.outcome == Outcome.DENY  # now over the rate limit
+        assert second.fired_policy == "r1"
 
 
 class TestDefaultAllow:
@@ -173,15 +202,16 @@ class TestCompilation:
         second = engine.compile("transaction-graph", "delete_record")
         assert first is second
 
-    def test_evaluation_order_is_allowlist_then_denylist_then_rate_limit(self) -> None:
+    def test_evaluation_order_is_allowlist_denylist_rate_limit_hitl_gate(self) -> None:
         policies = [
+            hitl_gate("h1", "s", ["*"]),
             rate_limit("r1", "s", ["*"], limit=5, window_seconds=60),
             denylist("d1", "s", ["*"]),
             allowlist("a1", "s", ["*"]),
         ]
         engine = PolicyEngine(policies)
         ordered_names = [p.policy for p in engine.compile("s", "tool").policies]
-        assert ordered_names == ["a1", "d1", "r1"]
+        assert ordered_names == ["a1", "d1", "r1", "h1"]
 
     def test_only_applicable_policies_are_included(self) -> None:
         policies = [

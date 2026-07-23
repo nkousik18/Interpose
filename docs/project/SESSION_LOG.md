@@ -10,6 +10,85 @@ Newest entry first. One entry per work session (not necessarily per calendar day
 
 ---
 
+## 2026-07-22 (cont'd, 4) — Phase 2 Day 6: Redis, HITL hold, `interpose review`
+
+**What happened:**
+- Merged Phase 1 (Days 1-5, plus the Phase 0 remainder) to `main` via PR #2 first --
+  squash-merged after `lint`/`test` both passed on CI. Established a new working
+  convention per explicit user request: commit → push → PR → wait for CI → merge
+  after *every* day's work from here on, not just at phase boundaries. Saved as a
+  standing feedback memory (`feedback_git_workflow_per_day`).
+- Added Redis to `docker-compose.yaml` (port 6379, default -- nothing else on this
+  machine was using it) and the `redis` Python client. Added `redis_url` to
+  `interpose.config.Settings`.
+- Built `src/interpose/session/`: `redis_client.py` (sync + async connection
+  factories, same split as `interpose.audit`'s engine setup) and `hitl.py` (the ticket
+  queue -- `interpose:hitl:{ticket_id}` hash with TTL, `interpose:hitl:pending` set for
+  fast listing, `create_ticket`/`get_ticket`/`wait_for_decision` async for the gateway,
+  `list_pending`/`decide_ticket` sync for the CLI).
+- `hitl_gate` now evaluates for real in `interpose.policies.policyset`: added
+  `Outcome.HOLD` and `reviewer_group`/`timeout_seconds` fields on `PolicyDecision`,
+  replacing the `NotImplementedError` stub from Day 3. Updated/added unit tests
+  accordingly (51 policy tests now, from 49).
+- Wired the HOLD path into the gateway (`interpose.gateway.app`): writes a `HELD`
+  audit row, opens a Redis ticket, then `await`s `wait_for_decision` (polling every
+  250ms) up to the policy's timeout. Approved → forwards for real, linked to the
+  `HELD` row via `parent_id` exactly like a `PASS`. Denied or timed-out → a
+  structured JSON-RPC error (`hitl_denied` / `hitl_timeout`, new error codes -32003/
+  -32004), also linked via `parent_id`. Refactored the PASS-path forward+audit logic
+  into a shared `_forward_and_record` helper since an approved hold needs the exact
+  same forward-then-record behavior a plain PASS does.
+- **Deliberate design call, written into the code and a new concept doc:** the
+  scoping doc's Stage 7 wording ("returns a held response... immediately... HITL flow
+  takes over") reads as an async retry/resume model, but MCP's `tools/call` has no
+  built-in mechanism for that. Built a blocking (async, non-blocking for *other*
+  requests) wait on the same request instead -- simpler, honestly testable in one
+  `asyncio.gather` per test, at the cost of holding an HTTP connection open for up to
+  the full `timeout_seconds` (documented as a known tradeoff, not glossed over).
+- Built `interpose review list/approve/deny` (`src/interpose/cli/main.py`), backed by
+  the same sync Redis client used elsewhere. `decide_ticket` returns `(ticket, applied)`
+  so the CLI can distinguish "you just decided this" from "already settled by someone
+  else" (idempotent, doesn't silently overwrite who actually decided first).
+- Added two new test tools (`hitl_tool`, `hitl_timeout_tool`) and matching policies
+  (30s and 2s timeouts) to exercise approve/deny/timeout without slowing the suite
+  down waiting on a real hour-long window.
+- Verified the full cycle live against real Postgres + Redis
+  (`tests/integration/test_gateway_hitl.py`): approve → forwards, with
+  `hitl_reviewer`/`hitl_decision`/`hitl_rationale` populated on the `COMPLETED` row;
+  deny → never forwards; no reviewer within the window → times out and denies. All
+  three produce a correctly linked, hash-chain-verifying `HELD` → terminal-row pair.
+- Extended the shared `clean_state` fixture (renamed from `clean_audit_table`) to also
+  flush Redis between tests, since a leftover ticket could otherwise be picked up by
+  another test's "first pending ticket" logic.
+- Added `concepts/21-redis-and-the-hitl-hold.md`.
+- **81 total tests green**; `ruff check .` clean repo-wide.
+
+**Decisions made:**
+- Block-and-poll (async) for the HITL hold, not an immediate-response-plus-retry
+  model -- see above and concept 21 for the full reasoning.
+- Session-state hash (`interpose:session:{agent_id}`, Section 6.8) deliberately not
+  built yet -- nothing reads/writes a risk score until Day 8's anomaly detector.
+- Git workflow going forward: commit/push/PR/merge after each day, not batched.
+
+**Current state:**
+- Phase 2 Day 6 done and checked off. HITL approval/denial/timeout all work
+  end-to-end against real infrastructure, with a complete, verifiable audit trail.
+
+**Next steps:**
+1. Day 7 — Control-plane LangGraph skeleton: typed state models
+   (`InterposeState`, `DecisionEvent`), Supervisor (A0) and Policy Evaluator (A1)
+   agents, in-process pub/sub event bus. This is the first LangGraph work in the
+   project -- introduce it as a concept when it starts.
+2. Commit/push/PR/merge Day 6's work per the new per-day cadence before starting Day 7.
+
+**Loose ends / reminders:**
+- The Kaggle API token pasted into an earlier chat message should still be rotated
+  (Settings → API → regenerate) — flagged again, still not confirmed done.
+- Postgres append-only role enforcement (Section 10.7) still not implemented — same
+  gap noted at the end of Day 4, still open.
+
+---
+
 ## 2026-07-22 (cont'd, 3) — Phase 1 Day 5: end-to-end tests, verify-audit CLI — Phase 1 complete
 
 **What happened:**
