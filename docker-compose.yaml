@@ -1,0 +1,26 @@
+# Local dev services. Postgres is the audit store (docs/INTERPOSE_SCOPING.md Section
+# 6.7); Redis joins here in Phase 2 (Day 6, HITL). Phase 1 Day 5 adds the gateway and
+# a mock upstream MCP server to this file for full docker-compose integration testing
+# (Section 14.5) -- for now this is just enough to develop and test the audit store
+# against a real Postgres.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: interpose
+      POSTGRES_PASSWORD: interpose_dev
+      POSTGRES_DB: interpose
+    ports:
+      # Host-side 5433, not 5432: this machine already has an unrelated Postgres
+      # install listening on 5432 -- left alone rather than touched.
+      - "5433:5432"
+    volumes:
+      - interpose_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U interpose -d interpose"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  interpose_postgres_data:

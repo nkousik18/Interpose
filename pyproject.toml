@@ -7,7 +7,17 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 dependencies = [
     "mcp[cli]>=1.28.1",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pyyaml>=6.0",
+    "sqlalchemy[asyncio]>=2.0",
+    "psycopg[binary]>=3.1",
+    "alembic>=1.13",
+    "pydantic-settings>=2.5",
 ]
+
+[project.scripts]
+interpose = "interpose.cli.main:app"
 
 [build-system]
 requires = ["hatchling"]
@@ -19,15 +29,23 @@ packages = ["src/interpose"]
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "pytest-asyncio>=0.24",
     "ruff>=0.15.22",
+]
+analytics = [
+    "pyspark>=4.2.0",
 ]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Alembic autogenerates these; hand-formatting each new migration to pass style
+# rules isn't a meaningful signal (only correctness of the migration itself is).
+extend-exclude = ["alembic/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"

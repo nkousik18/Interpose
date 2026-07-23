@@ -1,0 +1,14 @@
+# Local dev demo policy -- proves the gateway's policy stage actually fires.
+# denies the deliberately-dangerous test tool on the hello-echo upstream; `echo`
+# itself is untouched (no allowlist exists for hello-echo, so it stays default-allow).
+policy: hello-echo-no-dangerous-tool
+description: Local dev/demo policy -- denies the dangerous_tool test tool on hello-echo.
+applies_to:
+  server: hello-echo
+  tools: [dangerous_tool]
+effect:
+  type: denylist
+  reason: dangerous_tool is denylisted for this local demo
+audit:
+  severity: high
+  tag: [demo]

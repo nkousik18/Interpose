@@ -22,12 +22,12 @@ and subsampled, and a trivial MCP server runs locally.
 - [x] `CLAUDE.md` and `concepts/` established as working conventions.
 - [x] Local dev environment: Python 3.12 via `uv`, Docker, `kubectl`, `helm`, `terraform`.
 - [x] `kind` installed; a test cluster provisions and tears down successfully.
-- [x] IBM AML dataset downloaded (HI-Medium: 31.9M transaction rows, ~2.8GB). Subsampling to ~500K accounts is still pending (needs Spark/PySpark set up first).
+- [x] IBM AML dataset downloaded (HI-Medium: 31.9M transaction rows, ~2.8GB) and subsampled to 500K accounts / 3.16M transactions via PySpark (seed 42; see `data/README.md`).
 - [x] OFAC sanctions list downloaded and parsed (19,169 entries, `~/.interpose/data/ofac-sdn/sdn.csv`).
 - [x] MCP Python SDK explored; a trivial "echo" MCP server built and run locally (`examples/hello-mcp-echo/`).
 - [x] GitHub Actions CI skeleton (lint + test jobs, `.github/workflows/ci.yml`).
 
-**Gate:** all boxes above checked except AML subsampling — remaining Phase 0 work.
+**Gate:** met — all boxes above checked. Phase 0 complete.
 
 ## Phase 1 — Foundation
 
@@ -36,10 +36,59 @@ server; the policy engine evaluates each call; a hash-chained audit entry lands 
 
 Covers: FastAPI gateway request lifecycle, the policy engine (allowlist/denylist/rate-limit to
 start, then PII redaction + HITL stubs), Postgres audit schema and hash chaining, an
-integration test suite (docker-compose: Postgres + Redis + gateway + a mock upstream server).
+integration test suite (docker-compose: Postgres + gateway + a mock upstream server -- Redis
+deliberately deferred to Phase 2 Day 6, see Day 5's note below for why).
 
-**Gate:** a LangGraph agent makes a tool call through Interpose to a real MCP server; policy
-fires; a hash-chained audit entry is written and verifiable.
+- [x] Day 1 — Gateway request lifecycle scaffold: FastAPI app (`src/interpose/gateway/`),
+      Stages 1-3 (ingress, parse via MCP SDK, ConfigMap-stand-in route resolution) plus a naive
+      streaming forward (Stages 7-9), no policy or audit yet. Verified with a real MCP client
+      round trip (`initialize` / `list_tools` / `call_tool`) through the gateway to a real
+      streamable-HTTP upstream server, both as live subprocesses
+      (`tests/integration/test_gateway_naive_forward.py`).
+- [x] Day 2 — Policy engine skeleton: Pydantic policy models (`interpose.policies.schema`),
+      YAML loading/validation (`interpose.policies.loader`), three effect types (allowlist,
+      denylist, rate_limit), in-memory `PolicySet`/`PolicyEngine` compilation with caching
+      (`interpose.policies.policyset`). 40 unit tests passing (target was 20+).
+- [x] Day 3 — Wired the policy engine into the gateway: Stages 4-5 evaluate every
+      `tools/call` request; `PASS` forwards to upstream, `DENY` returns a structured
+      JSON-RPC error (fail-closed on any policy-engine exception). All 5 policy types now
+      parse (`pii_redaction`/`hitl_gate` added as schema stubs that raise `NotImplementedError`
+      if actually evaluated, rather than silently passing through). Verified live: a real
+      MCP client gets a denylisted tool call rejected with a structured error and an
+      unaffected tool call still passes (`tests/integration/test_gateway_policy.py`).
+      49 policy unit tests passing; 54 total tests green.
+- [x] Day 4 — Postgres + audit log: schema per Section 6.7 as SQLAlchemy models
+      (`interpose.audit.models`), Alembic migration applied against a real local
+      Postgres (`docker-compose.yaml`, port 5433 to avoid a pre-existing unrelated
+      Postgres install on this machine). Hash chain implementation
+      (`interpose.audit.chain`) with 12 unit tests, including tamper detection. Stage 6
+      (pre-forward INTENT write) and Stage 8 (COMPLETED/UPSTREAM_ERROR write, linked via
+      `parent_id`) wired into the gateway (`interpose.audit.store.AuditStore`, advisory-
+      lock-serialized writes). CI updated with a Postgres service so the pipeline stays
+      green. Verified live: a real call produces two linked, hash-chain-verifying rows;
+      a denied call produces one; a tampered row is caught
+      (`tests/integration/test_gateway_audit.py`). 69 total tests green.
+- [x] Day 5 — Buffer + integration polish: closed the "5+ end-to-end tests" checklist
+      (happy path, deny path, rate-limit path — new — malformed request — new — and
+      unknown server, 76 tests total green) and built `interpose verify-audit`
+      (`src/interpose/cli/`, Typer-based), tested against a real Postgres including a
+      genuine tamper-and-detect run through the CLI itself, not just `chain.py` in
+      isolation. Deliberately **not** done today, with reasons: (1) Redis joining
+      `docker-compose.yaml` — nothing consumes it yet (rate limiting is still the
+      in-memory stand-in from Day 2), so it'd be unused infrastructure until Day 6's
+      HITL work actually needs it; (2) containerizing the gateway and mock upstream
+      via Docker for a fuller docker-compose stack — deferred to Phase 2 (Day 9,
+      Helm chart + `kind`), which is where a container image becomes load-bearing
+      anyway rather than a second, separate container-build exercise today.
+
+**Gate:** met — real MCP traffic proxies through Interpose; policy fires (allow, deny, and
+rate-limit paths all verified live); a hash-chained audit entry lands in Postgres and
+verifies, including via `interpose verify-audit`. Phase 1 complete.
+
+*(Corrected from the original wording, which said "a LangGraph agent makes a tool call" --
+LangGraph isn't introduced until Phase 2's control-plane work per scoping doc Section 14.6.
+That looks like an artifact from this roadmap's original Day-1 adaptation of Section 14, not
+a deliberate requirement; the actual Section 14.5 EOW1 gate never mentions LangGraph.)
 
 ## Phase 2 — Governance
 

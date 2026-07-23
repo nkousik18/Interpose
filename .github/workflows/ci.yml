@@ -19,10 +19,27 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: interpose
+          POSTGRES_PASSWORD: interpose_dev
+          POSTGRES_DB: interpose
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U interpose -d interpose"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+psycopg://interpose:interpose_dev@localhost:5432/interpose
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
       - run: uv sync --all-extras --dev
+      - run: uv run alembic upgrade head
       - run: uv run pytest

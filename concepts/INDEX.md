@@ -20,5 +20,12 @@ concept was introduced.
 | 11 | [git-branching-and-github-flow.md](11-git-branching-and-github-flow.md) | Trunk-based vs. GitHub Flow vs. GitFlow, why we chose GitHub Flow, what branch protection does |
 | 12 | [oss-community-health-files.md](12-oss-community-health-files.md) | CONTRIBUTING/CODE_OF_CONDUCT/SECURITY/CHANGELOG/templates, and what CI actually enforces |
 | 13 | [session-continuity-and-progress-logs.md](13-session-continuity-and-progress-logs.md) | Why `docs/project/SESSION_LOG.md` exists, how it differs from CLAUDE.md/ROADMAP/CHANGELOG, and ADRs as a related pattern |
+| 14 | [spark-and-pyspark.md](14-spark-and-pyspark.md) | What Spark/PySpark are, why a distributed engine for a laptop-sized job, the JVM/JAVA_HOME dependency, `local[*]` vs. a real cluster |
+| 15 | [fastapi-and-the-naive-proxy.md](15-fastapi-and-the-naive-proxy.md) | What FastAPI is, the gateway's first (policy-free) proxy, why responses must stream not buffer, ConfigMap-driven routing before there's a ConfigMap |
+| 16 | [policy-engine-composition.md](16-policy-engine-composition.md) | Declarative policy DSL, Pydantic discriminated unions, why an allowlist flips its server to default-deny, hot-reload-ready compilation, the Redis rate-limit seam |
+| 17 | [fail-closed-policy-enforcement.md](17-fail-closed-policy-enforcement.md) | Why a policy denial is a JSON-RPC error not an HTTP error, fail-closed on policy-engine exceptions, what policy governs (tools/call only) vs. what bypasses it |
+| 18 | [postgres-sqlalchemy-alembic.md](18-postgres-sqlalchemy-alembic.md) | Why a real database now, what an ORM buys you, migrations as a version-controlled paper trail for schema changes, one shared DB-URL setting |
+| 19 | [hash-chained-audit-log.md](19-hash-chained-audit-log.md) | What tamper-evidence means and how a hash chain achieves it, the genesis hash, why one call can produce two append-only rows, the advisory-lock concurrency fix, app-clock vs. DB-server-time tradeoff |
+| 20 | [cli-with-typer.md](20-cli-with-typer.md) | Why Typer needed no new dependency, the single-command-collapses-the-CLI gotcha, why `--since` filters the report but never skips verifying earlier history |
 
 More get added as we build — each new one lands here the day it's created.
