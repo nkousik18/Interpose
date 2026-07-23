@@ -1,0 +1,6 @@
+# Local stand-in for what becomes a Kubernetes ConfigMap in Phase 2 (see charts/ once
+# it exists). Maps a gateway route name -- used as /mcp/{name} -- to the upstream MCP
+# server's real URL. See docs/INTERPOSE_SCOPING.md Section 6.5, Stage 3.
+servers:
+  hello-echo:
+    url: "http://127.0.0.1:9001/mcp"

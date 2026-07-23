@@ -1,0 +1,14 @@
+# Local dev demo policy -- proves the rate_limit effect actually fires end-to-end
+# through the live gateway, not just in the interpose.policies unit tests.
+policy: hello-echo-throttle-test-tool
+description: Local dev/demo policy -- limits throttled_tool to 1 call per window.
+applies_to:
+  server: hello-echo
+  tools: [throttled_tool]
+effect:
+  type: rate_limit
+  limit: 1
+  window_seconds: 60
+audit:
+  severity: low
+  tag: [demo]
