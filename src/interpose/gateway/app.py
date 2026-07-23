@@ -29,12 +29,15 @@ A `tools/call` request produces one of:
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hashlib
 import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +51,11 @@ from interpose.audit.chain import canonical_json
 from interpose.audit.db import create_engine, create_session_factory
 from interpose.audit.store import AuditStore
 from interpose.config import get_settings
+from interpose.control_plane.bus import EventBus
+from interpose.control_plane.graph import build_graph
+from interpose.control_plane.runner import run_forever
+from interpose.control_plane.state import Decision as CPDecision
+from interpose.control_plane.state import DecisionEvent, PolicyResult
 from interpose.gateway.routing import DEFAULT_CONFIG_PATH, RoutingTable, load_routing_table
 from interpose.policies.loader import load_policy_pack
 from interpose.policies.policyset import Outcome, PolicyDecision, PolicyEngine, RateLimiter
@@ -93,12 +101,23 @@ def create_app(
         app.state.rate_limiter = RateLimiter()
         app.state.http_client = httpx.AsyncClient()
         engine = create_engine(database_url or get_settings().database_url)
-        app.state.audit_store = AuditStore(create_session_factory(engine))
+        session_factory = create_session_factory(engine)
+        app.state.audit_store = AuditStore(session_factory)
         app.state.redis = create_async_redis(redis_url or get_settings().redis_url)
+
+        app.state.event_bus = EventBus()
+        control_plane_graph = build_graph(session_factory, app.state.redis)
+        control_plane_task = asyncio.create_task(
+            run_forever(app.state.event_bus, control_plane_graph)
+        )
+
         logger.info("gateway.started routes=%s", list(app.state.routing.servers.keys()))
         try:
             yield
         finally:
+            control_plane_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await control_plane_task
             await app.state.http_client.aclose()
             await app.state.redis.aclose()
             await engine.dispose()
@@ -239,7 +258,7 @@ async def _handle_tool_call(
             decision.fired_policy,
             decision.reason,
         )
-        await audit_store.write_entry(
+        denied = await audit_store.write_entry(
             status="DENIED",
             trace_id=trace_id,
             span_id=uuid.uuid4(),
@@ -251,6 +270,18 @@ async def _handle_tool_call(
             args_redacted=arguments,  # no PII redaction implemented yet (Day 3 stub)
             policies_fired=policies_fired,
             decision=_decision_payload(decision),
+        )
+        await _publish_decision_event(
+            request,
+            audit_id=denied.id,
+            trace_id=trace_id,
+            subject=subject,
+            session_id=session_id,
+            server_name=server_name,
+            tool_name=tool_name,
+            args_hash=args_hash,
+            policies_fired=policies_fired,
+            decision_payload=_decision_payload(decision),
         )
         return _policy_denied_response(rpc_id, decision)
 
@@ -292,6 +323,18 @@ async def _handle_tool_call(
         args_redacted=arguments,
         policies_fired=policies_fired,
         decision=_decision_payload(decision),
+    )
+    await _publish_decision_event(
+        request,
+        audit_id=intent.id,
+        trace_id=trace_id,
+        subject=subject,
+        session_id=session_id,
+        server_name=server_name,
+        tool_name=tool_name,
+        args_hash=args_hash,
+        policies_fired=policies_fired,
+        decision_payload=_decision_payload(decision),
     )
 
     return await _forward_and_record(
@@ -352,6 +395,18 @@ async def _handle_hold(
         args_redacted=arguments,
         policies_fired=policies_fired,
         decision=_decision_payload(decision),
+    )
+    await _publish_decision_event(
+        request,
+        audit_id=held.id,
+        trace_id=trace_id,
+        subject=subject,
+        session_id=session_id,
+        server_name=server_name,
+        tool_name=tool_name,
+        args_hash=args_hash,
+        policies_fired=policies_fired,
+        decision_payload=_decision_payload(decision),
     )
     ticket = await hitl.create_ticket(
         redis_conn,
@@ -568,6 +623,39 @@ def _decision_payload(decision: PolicyDecision) -> dict[str, Any]:
         "fired_policy": decision.fired_policy,
         "reason": decision.reason,
     }
+
+
+async def _publish_decision_event(
+    request: Request,
+    *,
+    audit_id: int,
+    trace_id: uuid.UUID,
+    subject: str,
+    session_id: str,
+    server_name: str,
+    tool_name: str,
+    args_hash: str,
+    policies_fired: list[dict[str, str]],
+    decision_payload: dict[str, Any],
+) -> None:
+    """Publishes a DecisionEvent to the control plane (Section 7.4) -- once per
+    decision-defining audit write (DENIED, HELD, or INTENT), never for the
+    COMPLETED/UPSTREAM_ERROR follow-ups those produce, since the decision itself
+    already got published when the row it's linked to was written."""
+    event_bus: EventBus = request.app.state.event_bus
+    event = DecisionEvent(
+        audit_id=audit_id,
+        trace_id=trace_id,
+        agent_id=subject,
+        session_id=session_id,
+        server=server_name,
+        tool=tool_name,
+        args_hash=args_hash,
+        policies_fired=[PolicyResult(**p) for p in policies_fired],
+        decision=CPDecision(**decision_payload),
+        timestamp=datetime.now(UTC),
+    )
+    await event_bus.publish(event)
 
 
 def _compile_and_evaluate(
