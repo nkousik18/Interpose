@@ -10,6 +10,114 @@ Newest entry first. One entry per work session (not necessarily per calendar day
 
 ---
 
+## 2026-07-23 — Phase 2 Day 8: remaining control-plane agents, first real LLM integration
+
+**What happened:**
+- First real LLM integration in the project. Provider decision made explicitly with
+  the user: **Groq**, not Anthropic, for now -- a genuinely free tier, avoiding
+  per-call billing during development. Not a deviation from the scoping doc: Section
+  6.4 already names Groq as an anticipated alternative provider behind a
+  `Settings.llm_provider`-style swap. Built `interpose.control_plane.llm` as that
+  swap seam -- `generate_structured(...)` is the only thing agent code depends on;
+  swapping to Claude later touches this one module, not `interpose.control_plane
+  .agents.*`.
+- Used Groq's real structured-output mode (`response_format={"type": "json_schema",
+  ..., "strict": True}`), not looser prompt-and-hope JSON -- matches Section 7's
+  "Structured JSON output constrained by Pydantic; no free-form response" literally.
+- Built Agent A2 (Anomaly Detector): a live, agent-scoped rate z-score (no
+  population baseline store exists, so no cross-agent comparison -- explicitly
+  returns `None` rather than a fabricated value below 3 windows of history or when
+  history has zero variance) + a repeated-denials rule. Cluster-deviation (the third
+  strategy Section 7.8 describes) deferred -- needs Spark-trained K-means centroids
+  that don't exist. Optional one-sentence LLM description only on high-severity
+  flags.
+- Built Agent A4 (Incident Escalator): 3 of 4 Section 7.10 promotion rules
+  implemented as a pure, fully-tested `should_promote` function. Extended Day 7's
+  graph with a real topology change -- a new `route_after_anomaly_detector` hop so a
+  high-severity anomaly from A2 now continues on to A4 (previously A2 only ever
+  ended the graph). The fourth rule (risk > 0.8 with pending HITL, via A3) is real in
+  the logic but not yet reachable via the graph -- named explicitly as a deliberate
+  gap, not a silent omission.
+- **Found and fixed a real severity bug via the integration tests** (not the LLM):
+  `should_promote` checks repeated-denials before anomaly-severity, so an event
+  tripping both got under-reported as `med` severity based purely on which string
+  came back first. Fixed with a separately-tested `compute_incident_severity` that
+  checks for a co-occurring high-severity anomaly independent of which rule
+  technically matched.
+- Built Agent A3 (Evidence Composer): real evidence assembly (last 20 session calls,
+  matched policy rules, A1's risk components, and a same-agent+same-tool prior-HITL-
+  outcome count as an honestly-simplified stand-in for the doc's "similar patterns").
+  Always has `state.enriched` populated (routing guarantees `HOLD` goes through A1
+  first) -- raises loudly if that invariant is ever violated rather than silently
+  composing an incomplete packet.
+- **Fixed a real design gap discovered while building A3**: `HITLPacket.ticket_id`
+  needs to be the actual Redis ticket ID, but the gateway was publishing the
+  `DecisionEvent` *before* the ticket existed. Reordered `_handle_hold` (create the
+  ticket, then publish, now carrying `hitl_ticket_id`) and added that field to
+  `DecisionEvent` -- a small, surgical fix rather than a documented gap, since the
+  correct fix was cheap once noticed.
+- **Two real bugs found only by an actual live Groq API call**, neither catchable by
+  mocked unit tests: (1) Groq's strict schema mode requires
+  `additionalProperties: false` on every object, which Pydantic doesn't set by
+  default -- fixed centrally in the LLM wrapper (`_strict_schema`), covered by a
+  permanent regression test. (2) `openai/gpt-oss-20b` (the configured model) spends
+  part of its token budget on hidden reasoning before producing visible output; at
+  default effort, a longer prompt (Agent A4's 5-8 sentence narrative) exhausted the
+  budget before emitting any JSON at all -- fixed with `reasoning_effort="low"`.
+- **Found and fixed a test-determinism hazard the moment a real API key existed**:
+  once the user added a real `GROQ_API_KEY` to their local `.env` for the smoke test,
+  every "fallback path" integration test silently started calling the real API
+  instead. Added `tests/conftest.py` forcing `GROQ_API_KEY=""` for the whole
+  automated test session, unconditionally -- the suite's behavior no longer depends
+  on what happens to be in any developer's local environment.
+- Rewrote `tests/integration/test_control_plane_graph.py`'s fixtures with care to
+  produce clean, non-cascading test cases (e.g. exactly 2 denials to cross Agent A1's
+  risk threshold without also tripping Agent A2's own repeated-denials threshold),
+  plus dedicated cascade tests for the new A2→A4 path.
+- Added `concepts/24-narrative-generation-with-a-real-llm.md` and
+  `concepts/25-remaining-control-plane-agents.md`.
+- **154 total tests green** (61 new control-plane unit tests, graph integration
+  tests rewritten and expanded); `ruff check .` clean repo-wide.
+
+**Decisions made:**
+- Groq over Anthropic for now, explicitly at the user's request, for cost reasons --
+  not a scope reduction, since it's the same provider-swappable design the doc
+  already called for.
+- `reasoning_effort="low"` and `max_tokens=500` as defaults for all structured LLM
+  calls in this project -- these are short, low-ambiguity tasks that don't benefit
+  from deep reasoning, and the token budget needs to go to the actual output.
+- Automated tests must never depend on local secrets, enforced via `tests/conftest.py`
+  rather than relying on discipline alone.
+
+**Current state:**
+- All five control-plane agents are real. Phase 2 is not yet complete -- Day 9
+  (Helm chart + `kind` deployment) and Day 10 (buffer/integration polish) remain
+  before the phase gate is met.
+
+**Next steps:**
+1. Day 9 — Helm chart + `kind` deployment: chart templates (Section 11.4), a dev
+   values file with embedded Postgres/Redis sub-charts, `scripts/dev-up.sh`
+   completing kind-create + helm-install + port-forwards in under 5 minutes, Grafana
+   dashboard schemas (data comes later, Phase 3). First real Kubernetes deployment
+   of Interpose -- introduce Helm as a concept when this starts (Kubernetes and
+   Terraform are already covered from Phase 0; Helm itself isn't yet).
+2. Day 10 — buffer + integration polish: all tests green in CI, README/quickstart
+   draft, first distributed trace in Jaeger, adversarial test suite skeleton.
+3. Commit/push/PR/merge Day 8's work per the established per-day cadence before
+   starting Day 9.
+
+**Loose ends / reminders:**
+- The Kaggle API token pasted into an earlier chat message should still be rotated
+  (Settings → API → regenerate) — flagged again, still not confirmed done.
+- Postgres append-only role enforcement (Section 10.7) still not implemented — same
+  gap noted at the end of Day 4, still open.
+- The user's real `GROQ_API_KEY` now lives in a local, gitignored `.env` -- confirm
+  `.gitignore` actually excludes it before the next commit (it should already, per
+  the Day 0 `.gitignore` setup, but worth a explicit check given this is the first
+  time a real secret has actually been placed in that file).
+
+---
+
 ## 2026-07-22 (cont'd, 5) — Phase 2 Day 7: LangGraph control-plane skeleton
 
 **What happened:**

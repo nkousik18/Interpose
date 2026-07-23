@@ -11,10 +11,18 @@ The routing rule is a two-hop sequence, not a single fan-out choice, matching Se
   - PASS with session risk above threshold -> A1, then -> A2
   - PASS otherwise -> A1, then END
 
-Two separate router functions implement the two hops, since LangGraph's
+A third hop, added Phase 2 Day 8 once Agent A2 does real work: after A2 runs, a
+high-severity AnomalyFlag promotes onward to A4 (Section 7.10's "AnomalyFlag severity
+== high -> promote" rule) -- otherwise the graph ends there, same as before. This is
+the only one of Section 7.10's four promotion triggers that's actually reachable via
+the graph today; see `interpose.control_plane.agents.incident_escalator`'s module
+docstring for the one that isn't yet (risk > 0.8 with pending HITL, via Agent A3).
+
+Separate router functions implement each hop, since LangGraph's
 `add_conditional_edges` dispatches from one node at a time based on the state as it
 exists *after* that node runs -- `route_after_supervisor` runs before A1 has had a
-chance to enrich anything, `route_after_policy_evaluator` runs after.
+chance to enrich anything, `route_after_policy_evaluator` runs after, and
+`route_after_anomaly_detector` runs after A2.
 """
 
 from __future__ import annotations
@@ -45,4 +53,12 @@ def route_after_policy_evaluator(state: InterposeState) -> str:
         and state.enriched.session_risk_score > RISK_THRESHOLD
     ):
         return "to_a2"
+    return "end"
+
+
+def route_after_anomaly_detector(state: InterposeState) -> str:
+    """Third hop, after A2 has run. A high-severity flag promotes onward to A4;
+    anything else (no flag, or a lower-severity one) ends the graph here."""
+    if state.anomaly is not None and state.anomaly.severity == "high":
+        return "to_a4"
     return "end"
