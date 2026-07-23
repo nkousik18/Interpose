@@ -115,6 +115,25 @@ chart + `scripts/dev-up.sh`, first distributed trace visible in Jaeger.
       until now. Session-state hash (`interpose:session:{agent_id}`) deliberately not
       built -- nothing reads/writes a risk score yet (Day 8's anomaly detector will).
       81 total tests green.
+- [x] Day 7 — LangGraph control-plane skeleton: typed state models per Section 7.4
+      (`interpose.control_plane.state` -- `DecisionEvent`, `EnrichedDecision`,
+      `InterposeState`, and the still-unused-until-Day-8 `AnomalyFlag`/`HITLPacket`/
+      `Incident`). In-process pub/sub (`interpose.control_plane.bus.EventBus`, the
+      documented seam from Section 6.17) decouples control-plane processing from the
+      gateway's hot path. Supervisor (A0) implements Section 7.6's routing rule as two
+      sequential conditional hops (a deliberate prose-over-diagram reading, see concept
+      22); 20+ unit-test matrix. Policy Evaluator (A1) computes real session features
+      live from the audit log (calls/minute, unique tools, HITL/denial counts -- 3 of
+      Section 7.7's listed features deliberately not computed, each missing a named
+      dependency) and writes a heuristic risk score into the previously-deferred
+      `interpose:session:{session_id}` Redis hash -- its first real reader/writer.
+      Agents A2/A3/A4 are placeholder stub terminal nodes (real routing to them, no
+      real behavior yet -- Day 8). Verified live: a real gateway call reaches the
+      control plane and A1's output lands in Redis
+      (`tests/integration/test_gateway_control_plane.py`); graph-level routing and
+      enrichment verified directly against real Postgres for PASS/HOLD/DENY/elevated-
+      risk paths (`tests/integration/test_control_plane_graph.py`). 120 total tests
+      green.
 
 **Gate:** full stack deploys to `kind` via Helm; a HITL cycle completes end-to-end with a
 manual approval; hash chain verifies; control-plane agents produce enriched decision events.

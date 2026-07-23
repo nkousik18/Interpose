@@ -10,6 +10,104 @@ Newest entry first. One entry per work session (not necessarily per calendar day
 
 ---
 
+## 2026-07-22 (cont'd, 5) — Phase 2 Day 7: LangGraph control-plane skeleton
+
+**What happened:**
+- First LangGraph work in the project. Added `langgraph` as a dependency and
+  explored its actual API (a `StateGraph` over a typed state, nodes as plain
+  functions, conditional edges via router functions, `.compile()` then `.ainvoke()`/
+  `.astream()`) before writing any control-plane code, since this is one of the
+  three resume-gap technologies the whole project exists to demonstrate real
+  competence in, not just import.
+- Added `interpose.control_plane.state`: the full typed state model from Section 7.4
+  (`DecisionEvent`, `EnrichedDecision`, `AnomalyFlag`, `HITLPacket`, `Incident`,
+  `InterposeState`) -- defined as one complete contract now even though only two of
+  five agents exist yet, since it's a single design decision, not five incremental
+  ones.
+- Added `interpose.control_plane.bus.EventBus` -- the exact module/class path
+  Section 6.17 names as "the documented seam" for swapping in-process pub/sub for
+  Redis Streams later. An `asyncio.Queue` wrapper; publishing is a fast, non-blocking
+  handoff so control-plane processing never slows the gateway's hot path (Section
+  7.12).
+- Built Agent A0 (Supervisor, `interpose.control_plane.agents.supervisor`): pure
+  rule-based dispatch, no LLM, as two sequential conditional-edge functions rather
+  than one. **Deliberate judgment call:** Section 7.5's ASCII diagram reads like a
+  parallel fan-out to three specialists at once; Section 7.6's prose describes a
+  conditional sequential path (`DENY` skips straight to A4; everything else goes
+  through A1 first, then conditionally to A2 or A3). Went with the prose -- more
+  specific than a diagram, and matches how a supervisor/dispatcher pattern is
+  normally understood. 20+ case test matrix per Section 7.6's own testing spec.
+- Built Agent A1 (Policy Evaluator, `interpose.control_plane.agents.policy_evaluator`):
+  computes real session features live from `audit_entries` (calls/minute, unique
+  tools, total calls, HITL ticket count, denial count) rather than the "materialized
+  view refreshed every 15 minutes" the doc describes -- that's a Spark job that
+  doesn't exist; a live query is simpler and sufficient today. Three of Section 7.7's
+  listed features deliberately not computed, each missing a named, concrete
+  dependency (read/write ratio needs a tool-action registry; sanctions-check
+  frequency needs the OFAC MCP server, Phase 3; per-tool z-scores need the same
+  missing historical-baseline store as the materialized view). Zero LLM calls --
+  Section 7.7 gates the narrative LLM call on a HITL packet being composed
+  downstream (Agent A3, Day 8), so none of that applies yet.
+- The risk-score formula is an explicit, hand-weighted heuristic, documented as such
+  (not a calibrated model -- no production data yet to calibrate against). Its output
+  now gets written into `interpose:session:{session_id}` in Redis -- the first real
+  reader/writer of the session-state hash deferred twice already (Days 5 and 6).
+- Agents A2 (Anomaly Detector), A3 (Evidence Composer), A4 (Incident Escalator) are
+  placeholder stub terminal nodes (`interpose.control_plane.agents.stubs`) -- the
+  Supervisor's routing *to* them is real and tested; what happens once execution
+  arrives is not, until Day 8.
+- Wired it all into the gateway: `_publish_decision_event` publishes a `DecisionEvent`
+  after each decision-defining audit write (`DENIED`, `HELD`, `INTENT` -- never the
+  `COMPLETED`/`UPSTREAM_ERROR` follow-ups, since the decision itself was already
+  published). A background `asyncio.Task` (`interpose.control_plane.runner.run_forever`)
+  consumes the bus and runs the graph, started at gateway startup and cancelled at
+  shutdown.
+- Verified two ways: (1) the graph directly against real Postgres, checking both
+  routing (`astream`'s node sequence) and A1's actual enrichment content across
+  PASS/HOLD/DENY/elevated-risk-PASS paths (`tests/integration/test_control_plane_graph.py`);
+  (2) the full gateway wiring, by making a real HTTP call and polling Redis for A1's
+  risk-score hash to appear (`tests/integration/test_gateway_control_plane.py`) --
+  proof "decisions flow from gateway to control plane" end to end, not just that the
+  pieces compile.
+- Learned a real LangGraph quirk worth remembering: node inputs/outputs are plain
+  dicts internally, but a nested Pydantic field on the final `.ainvoke()` result comes
+  back as an actual model instance, not a re-serialized dict -- attribute access, not
+  another `[...]` lookup. Tripped up the first draft of the graph-level tests.
+- Added `concepts/22-langgraph-fundamentals-and-supervisor-routing.md` and
+  `concepts/23-control-plane-event-bus-and-feature-engineering.md`.
+- **120 total tests green** (34 new control-plane unit tests, 5 new integration
+  tests); `ruff check .` clean repo-wide.
+
+**Decisions made:**
+- Supervisor routing follows Section 7.6's prose (sequential conditional dispatch),
+  not Section 7.5's diagram (which reads as parallel fan-out) -- see concept 22.
+- Stub terminal nodes for A2/A3/A4 rather than either faking their behavior or
+  delaying the whole graph topology to Day 8 -- the routing edges are real today.
+- A1's risk score is a named, deliberate heuristic, not a stand-in for A2's later,
+  more principled (Spark/K-means-based) anomaly detection -- different purposes.
+
+**Current state:**
+- Phase 2 Day 7 done and checked off. Decisions genuinely flow from the gateway into
+  a real, tested LangGraph graph; two of five agents do real work, three are honest
+  placeholders with real routing already wired to them.
+
+**Next steps:**
+1. Day 8 — remaining control-plane agents: Anomaly Detector (A2), Evidence Composer
+   (A3), Incident Escalator (A4). First LLM integration in the project (Claude via
+   API) for narrative-producing agents, with structured Pydantic output enforcement
+   and snapshot/golden-fixture testing for the LLM outputs. This will need an
+   Anthropic API key configured -- first time the project actually calls an LLM.
+2. Commit/push/PR/merge Day 7's work per the established per-day cadence before
+   starting Day 8.
+
+**Loose ends / reminders:**
+- The Kaggle API token pasted into an earlier chat message should still be rotated
+  (Settings → API → regenerate) — flagged again, still not confirmed done.
+- Postgres append-only role enforcement (Section 10.7) still not implemented — same
+  gap noted at the end of Day 4, still open.
+
+---
+
 ## 2026-07-22 (cont'd, 4) — Phase 2 Day 6: Redis, HITL hold, `interpose review`
 
 **What happened:**
