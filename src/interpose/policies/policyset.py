@@ -1,11 +1,13 @@
 """In-memory PolicySet compilation and evaluation.
 
 Covers Stage 4 (policy compilation) and Stage 5 (policy evaluation) from
-docs/INTERPOSE_SCOPING.md Section 6.5 -- but only for the allowlist/denylist/
-rate_limit effect types. `pii_redaction` and `hitl_gate` parse (schema.py) but
-`PolicySet.evaluate` raises `NotImplementedError` if either shows up in an applicable
+docs/INTERPOSE_SCOPING.md Section 6.5, for four of the five effect types: allowlist,
+denylist, rate_limit, and (as of Phase 2 Day 6) hitl_gate, which produces a HOLD
+outcome carrying enough information for the gateway to open a ticket
+(`interpose.session.hitl`). `pii_redaction` still just parses (schema.py) --
+`PolicySet.evaluate` raises `NotImplementedError` if it shows up in an applicable
 policy set, rather than silently letting the call through as if the policy didn't
-exist. Real enforcement for those two lands in a later phase.
+exist.
 
 Allowlist semantics, spelled out because they're not obvious from the schema alone:
 an allowlist policy for a server doesn't just grant its own tools -- its presence
@@ -39,6 +41,7 @@ from interpose.policies.schema import (
 class Outcome(StrEnum):
     PASS = "PASS"
     DENY = "DENY"
+    HOLD = "HOLD"
 
 
 @dataclass(frozen=True)
@@ -46,6 +49,9 @@ class PolicyDecision:
     outcome: Outcome
     fired_policy: str | None = None
     reason: str | None = None
+    # Only set when outcome is HOLD -- what the gateway needs to open a HITL ticket.
+    reviewer_group: str | None = None
+    timeout_seconds: int | None = None
 
 
 class RateLimiter:
@@ -103,10 +109,21 @@ class PolicySet:
                     return PolicyDecision(Outcome.DENY, policy.policy, "rate_limit_exceeded")
 
         for policy in self._policies:
-            if isinstance(policy.effect, PiiRedactionEffect | HitlGateEffect):
+            if isinstance(policy.effect, PiiRedactionEffect):
                 raise NotImplementedError(
-                    f"{policy.effect.type} policies are not enforced yet "
-                    f"(policy {policy.policy!r}); schema-only as of Phase 1 Day 3"
+                    f"pii_redaction policies are not enforced yet (policy "
+                    f"{policy.policy!r}); schema-only as of Phase 1 Day 3"
+                )
+
+        for policy in self._policies:
+            effect = policy.effect
+            if isinstance(effect, HitlGateEffect):
+                return PolicyDecision(
+                    Outcome.HOLD,
+                    policy.policy,
+                    "hitl_required",
+                    reviewer_group=effect.reviewer_group,
+                    timeout_seconds=effect.timeout_seconds,
                 )
 
         return PolicyDecision(Outcome.PASS)

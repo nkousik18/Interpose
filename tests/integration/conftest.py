@@ -14,6 +14,7 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from interpose.config import get_settings
+from interpose.session.redis_client import create_sync_redis
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 UPSTREAM_SCRIPT = REPO_ROOT / "examples" / "hello-mcp-http-echo" / "server.py"
@@ -50,14 +51,23 @@ def upstream_and_gateway():
 
 
 @pytest.fixture(autouse=True)
-def clean_audit_table():
-    """Every audit-touching test starts from an empty table -- the hash chain's
-    genesis check (see interpose.audit.chain) only makes sense against a known,
-    reproducible starting point."""
+def clean_state():
+    """Every test starts from an empty audit table and an empty HITL ticket queue.
+    For audit, the hash chain's genesis check (interpose.audit.chain) only makes
+    sense against a known, reproducible starting point; for Redis, a leftover ticket
+    from a previous test could otherwise be picked up by _approve_shortly/
+    _deny_shortly's "first pending ticket" logic in test_gateway_hitl.py."""
     engine = create_engine(get_settings().database_url)
     try:
         with engine.begin() as conn:
             conn.execute(text("TRUNCATE TABLE audit_entries RESTART IDENTITY"))
     finally:
         engine.dispose()
+
+    redis_conn = create_sync_redis(get_settings().redis_url)
+    try:
+        redis_conn.flushdb()
+    finally:
+        redis_conn.close()
+
     yield

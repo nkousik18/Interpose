@@ -14,10 +14,17 @@ exactly as it did on Day 1: there's no `{server, tool}` pair for a policy to mat
 against, and no single well-defined "completion" moment to audit for a stream that's
 designed to stay open.
 
-A `tools/call` request produces either one audit row (DENIED -- nothing is pending,
-so there's no intent to record separately) or two linked rows (PASS: an INTENT row
-written *before* forwarding, so the audit log shows intent even if the forward step
-itself crashes; then a COMPLETED or UPSTREAM_ERROR row after, linked via `parent_id`).
+A `tools/call` request produces one of:
+- One `DENIED` row (policy denylist/rate-limit/allowlist -- nothing was ever pending).
+- Two linked rows (`PASS`): an `INTENT` row written *before* forwarding, so the audit
+  log shows intent even if the forward step itself crashes; then `COMPLETED` or
+  `UPSTREAM_ERROR`, linked via `parent_id`.
+- Two linked rows (`HOLD`, Phase 2 Day 6): a `HELD` row written when a HITL ticket
+  opens, then -- once a reviewer decides, or the ticket times out -- `COMPLETED` (the
+  call proceeds), `UPSTREAM_ERROR`, or `DENIED`, linked via `parent_id`. The gateway
+  blocks (asynchronously; other requests are unaffected) waiting for that decision --
+  see concepts/21-redis-and-the-hitl-hold.md for why this is a deliberate MVP
+  simplification rather than the doc's literal "immediate held response" wording.
 """
 
 from __future__ import annotations
@@ -44,6 +51,8 @@ from interpose.config import get_settings
 from interpose.gateway.routing import DEFAULT_CONFIG_PATH, RoutingTable, load_routing_table
 from interpose.policies.loader import load_policy_pack
 from interpose.policies.policyset import Outcome, PolicyDecision, PolicyEngine, RateLimiter
+from interpose.session import hitl
+from interpose.session.redis_client import create_async_redis
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +61,8 @@ DEFAULT_POLICY_DIR = Path("config/policies")
 # JSON-RPC reserves -32000 to -32099 for implementation-defined server errors.
 POLICY_DENIED_ERROR_CODE = -32001
 UPSTREAM_ERROR_CODE = -32002
+HITL_DENIED_ERROR_CODE = -32003
+HITL_TIMEOUT_ERROR_CODE = -32004
 
 # Headers meaningful to the MCP streamable-http transport (plus Authorization, read
 # now for future policy/audit use even though nothing enforces it yet) -- forwarded to
@@ -73,6 +84,7 @@ def create_app(
     config_path: Path | str = DEFAULT_CONFIG_PATH,
     policy_dir: Path | str = DEFAULT_POLICY_DIR,
     database_url: str | None = None,
+    redis_url: str | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -82,11 +94,13 @@ def create_app(
         app.state.http_client = httpx.AsyncClient()
         engine = create_engine(database_url or get_settings().database_url)
         app.state.audit_store = AuditStore(create_session_factory(engine))
+        app.state.redis = create_async_redis(redis_url or get_settings().redis_url)
         logger.info("gateway.started routes=%s", list(app.state.routing.servers.keys()))
         try:
             yield
         finally:
             await app.state.http_client.aclose()
+            await app.state.redis.aclose()
             await engine.dispose()
 
     app = FastAPI(title="Interpose gateway", lifespan=lifespan)
@@ -240,6 +254,25 @@ async def _handle_tool_call(
         )
         return _policy_denied_response(rpc_id, decision)
 
+    if decision.outcome is Outcome.HOLD:
+        return await _handle_hold(
+            request=request,
+            decision=decision,
+            trace_id=trace_id,
+            args_hash=args_hash,
+            subject=subject,
+            server_name=server_name,
+            tool_name=tool_name,
+            arguments=arguments,
+            rpc_id=rpc_id,
+            session_id=session_id,
+            policies_fired=policies_fired,
+            upstream_url=upstream_url,
+            forward_headers=forward_headers,
+            body=body,
+            request_id=request_id,
+        )
+
     logger.info(
         "gateway.policy_passed request_id=%s server=%s tool=%s fired_policy=%s",
         request_id,
@@ -261,11 +294,224 @@ async def _handle_tool_call(
         decision=_decision_payload(decision),
     )
 
+    return await _forward_and_record(
+        client=client,
+        audit_store=audit_store,
+        method=request.method,
+        upstream_url=upstream_url,
+        forward_headers=forward_headers,
+        body=body,
+        request_id=request_id,
+        parent_id=intent.id,
+        trace_id=trace_id,
+        subject=subject,
+        session_id=session_id,
+        server_name=server_name,
+        tool_name=tool_name,
+        args_hash=args_hash,
+        arguments=arguments,
+        policies_fired=policies_fired,
+        decision_payload=_decision_payload(decision),
+        rpc_id=rpc_id,
+    )
+
+
+async def _handle_hold(
+    *,
+    request: Request,
+    decision: PolicyDecision,
+    trace_id: uuid.UUID,
+    args_hash: str,
+    subject: str,
+    server_name: str,
+    tool_name: str,
+    arguments: dict[str, Any],
+    rpc_id: str | int,
+    session_id: str,
+    policies_fired: list[dict[str, str]],
+    upstream_url: str,
+    forward_headers: dict[str, str],
+    body: bytes,
+    request_id: str,
+) -> Response:
+    audit_store: AuditStore = request.app.state.audit_store
+    client: httpx.AsyncClient = request.app.state.http_client
+    redis_conn = request.app.state.redis
+    reviewer_group = decision.reviewer_group or "unspecified"
+    timeout_seconds = decision.timeout_seconds or 0
+
+    held = await audit_store.write_entry(
+        status="HELD",
+        trace_id=trace_id,
+        span_id=uuid.uuid4(),
+        agent_id=subject,
+        session_id=session_id,
+        server=server_name,
+        tool=tool_name,
+        args_hash=args_hash,
+        args_redacted=arguments,
+        policies_fired=policies_fired,
+        decision=_decision_payload(decision),
+    )
+    ticket = await hitl.create_ticket(
+        redis_conn,
+        server=server_name,
+        tool=tool_name,
+        arguments=arguments,
+        agent_id=subject,
+        session_id=session_id,
+        trace_id=str(trace_id),
+        audit_entry_id=held.id,
+        reviewer_group=reviewer_group,
+        timeout_seconds=timeout_seconds,
+    )
+    logger.info(
+        "gateway.hitl_held request_id=%s ticket_id=%s server=%s tool=%s reviewer_group=%s "
+        "timeout_seconds=%d",
+        request_id,
+        ticket.ticket_id,
+        server_name,
+        tool_name,
+        reviewer_group,
+        timeout_seconds,
+    )
+
+    resolved = await hitl.wait_for_decision(redis_conn, ticket.ticket_id, timeout_seconds)
+
+    if resolved is None or resolved.status == "PENDING":
+        logger.warning(
+            "gateway.hitl_timeout request_id=%s ticket_id=%s", request_id, ticket.ticket_id
+        )
+        await audit_store.write_entry(
+            status="DENIED",
+            trace_id=trace_id,
+            span_id=uuid.uuid4(),
+            parent_id=held.id,
+            agent_id=subject,
+            session_id=session_id,
+            server=server_name,
+            tool=tool_name,
+            args_hash=args_hash,
+            args_redacted=arguments,
+            policies_fired=policies_fired,
+            decision={
+                "outcome": "DENY",
+                "fired_policy": decision.fired_policy,
+                "reason": "hitl_timeout",
+            },
+            hitl_ticket_id=uuid.UUID(ticket.ticket_id),
+        )
+        return _error_response(
+            rpc_id,
+            HITL_TIMEOUT_ERROR_CODE,
+            "hitl_timeout",
+            {"ticket_id": ticket.ticket_id, "reviewer_group": reviewer_group},
+        )
+
+    if resolved.status == "DENIED":
+        logger.info(
+            "gateway.hitl_denied request_id=%s ticket_id=%s decided_by=%s",
+            request_id,
+            ticket.ticket_id,
+            resolved.decided_by,
+        )
+        await audit_store.write_entry(
+            status="DENIED",
+            trace_id=trace_id,
+            span_id=uuid.uuid4(),
+            parent_id=held.id,
+            agent_id=subject,
+            session_id=session_id,
+            server=server_name,
+            tool=tool_name,
+            args_hash=args_hash,
+            args_redacted=arguments,
+            policies_fired=policies_fired,
+            decision={
+                "outcome": "DENY",
+                "fired_policy": decision.fired_policy,
+                "reason": "hitl_denied",
+            },
+            hitl_ticket_id=uuid.UUID(ticket.ticket_id),
+            hitl_reviewer=resolved.decided_by,
+            hitl_decision=resolved.status,
+            hitl_rationale=resolved.rationale,
+        )
+        return _error_response(
+            rpc_id,
+            HITL_DENIED_ERROR_CODE,
+            "hitl_denied",
+            {
+                "ticket_id": ticket.ticket_id,
+                "reviewer": resolved.decided_by,
+                "rationale": resolved.rationale,
+            },
+        )
+
+    # APPROVED -- proceed exactly like a PASS, linked back to the HELD entry.
+    logger.info(
+        "gateway.hitl_approved request_id=%s ticket_id=%s decided_by=%s",
+        request_id,
+        ticket.ticket_id,
+        resolved.decided_by,
+    )
+    return await _forward_and_record(
+        client=client,
+        audit_store=audit_store,
+        method=request.method,
+        upstream_url=upstream_url,
+        forward_headers=forward_headers,
+        body=body,
+        request_id=request_id,
+        parent_id=held.id,
+        trace_id=trace_id,
+        subject=subject,
+        session_id=session_id,
+        server_name=server_name,
+        tool_name=tool_name,
+        args_hash=args_hash,
+        arguments=arguments,
+        policies_fired=policies_fired,
+        decision_payload=_decision_payload(decision),
+        rpc_id=rpc_id,
+        hitl_ticket_id=uuid.UUID(ticket.ticket_id),
+        hitl_reviewer=resolved.decided_by,
+        hitl_decision=resolved.status,
+        hitl_rationale=resolved.rationale,
+    )
+
+
+async def _forward_and_record(
+    *,
+    client: httpx.AsyncClient,
+    audit_store: AuditStore,
+    method: str,
+    upstream_url: str,
+    forward_headers: dict[str, str],
+    body: bytes,
+    request_id: str,
+    parent_id: int,
+    trace_id: uuid.UUID,
+    subject: str,
+    session_id: str,
+    server_name: str,
+    tool_name: str,
+    args_hash: str,
+    arguments: dict[str, Any],
+    policies_fired: list[dict[str, str]],
+    decision_payload: dict[str, Any],
+    rpc_id: str | int,
+    hitl_ticket_id: uuid.UUID | None = None,
+    hitl_reviewer: str | None = None,
+    hitl_decision: str | None = None,
+    hitl_rationale: str | None = None,
+) -> Response:
+    """Shared by the PASS path and a HITL-approved hold: forward to upstream, then
+    write the COMPLETED/UPSTREAM_ERROR audit row linked to whatever came before it
+    (an INTENT row for a plain PASS, a HELD row for an approved hold)."""
     start = time.monotonic()
     try:
-        response = await _forward(
-            client, request.method, upstream_url, forward_headers, body, request_id
-        )
+        response = await _forward(client, method, upstream_url, forward_headers, body, request_id)
     except httpx.HTTPError as exc:
         latency_ms = int((time.monotonic() - start) * 1000)
         logger.exception("gateway.upstream_error request_id=%s", request_id)
@@ -273,7 +519,7 @@ async def _handle_tool_call(
             status="UPSTREAM_ERROR",
             trace_id=trace_id,
             span_id=uuid.uuid4(),
-            parent_id=intent.id,
+            parent_id=parent_id,
             agent_id=subject,
             session_id=session_id,
             server=server_name,
@@ -283,18 +529,22 @@ async def _handle_tool_call(
             policies_fired=policies_fired,
             decision={"outcome": "UPSTREAM_ERROR", "detail": str(exc)},
             latency_ms=latency_ms,
+            hitl_ticket_id=hitl_ticket_id,
+            hitl_reviewer=hitl_reviewer,
+            hitl_decision=hitl_decision,
+            hitl_rationale=hitl_rationale,
         )
         return _upstream_error_response(rpc_id, exc)
 
     latency_ms = int((time.monotonic() - start) * 1000)
-    # Latency measures time-to-response-headers, not full body consumption -- the
-    # response streams from here (see _forward), and a tool call's body is normally
-    # a single message anyway, so this is a reasonable proxy without re-buffering.
+    # Latency measures time-to-response-headers, not full body consumption (see
+    # _forward) -- and for a held call, not the time spent waiting on HITL review
+    # either, which is tracked separately via the HELD/COMPLETED audit timestamps.
     await audit_store.write_entry(
         status="COMPLETED",
         trace_id=trace_id,
         span_id=uuid.uuid4(),
-        parent_id=intent.id,
+        parent_id=parent_id,
         agent_id=subject,
         session_id=session_id,
         server=server_name,
@@ -302,8 +552,12 @@ async def _handle_tool_call(
         args_hash=args_hash,
         args_redacted=arguments,
         policies_fired=policies_fired,
-        decision=_decision_payload(decision),
+        decision=decision_payload,
         latency_ms=latency_ms,
+        hitl_ticket_id=hitl_ticket_id,
+        hitl_reviewer=hitl_reviewer,
+        hitl_decision=hitl_decision,
+        hitl_rationale=hitl_rationale,
     )
     return response
 
@@ -339,26 +593,21 @@ def _compile_and_evaluate(
 
 
 def _policy_denied_response(rpc_id: str | int, decision: PolicyDecision) -> Response:
-    error = JSONRPCError(
-        jsonrpc="2.0",
-        id=rpc_id,
-        error=ErrorData(
-            code=POLICY_DENIED_ERROR_CODE,
-            message="policy_denied",
-            data={"policy": decision.fired_policy, "reason": decision.reason},
-        ),
+    return _error_response(
+        rpc_id,
+        POLICY_DENIED_ERROR_CODE,
+        "policy_denied",
+        {"policy": decision.fired_policy, "reason": decision.reason},
     )
-    body = JSONRPCMessage(error).model_dump_json()
-    return Response(content=body, media_type="application/json")
 
 
 def _upstream_error_response(rpc_id: str | int, exc: Exception) -> Response:
+    return _error_response(rpc_id, UPSTREAM_ERROR_CODE, "upstream_error", {"detail": str(exc)})
+
+
+def _error_response(rpc_id: str | int, code: int, message: str, data: dict[str, Any]) -> Response:
     error = JSONRPCError(
-        jsonrpc="2.0",
-        id=rpc_id,
-        error=ErrorData(
-            code=UPSTREAM_ERROR_CODE, message="upstream_error", data={"detail": str(exc)}
-        ),
+        jsonrpc="2.0", id=rpc_id, error=ErrorData(code=code, message=message, data=data)
     )
     body = JSONRPCMessage(error).model_dump_json()
     return Response(content=body, media_type="application/json")

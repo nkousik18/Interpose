@@ -33,8 +33,18 @@ jobs:
           --health-interval 2s
           --health-timeout 3s
           --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
     env:
       DATABASE_URL: postgresql+psycopg://interpose:interpose_dev@localhost:5432/interpose
+      REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5

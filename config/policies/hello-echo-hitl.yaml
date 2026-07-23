@@ -1,0 +1,15 @@
+# Local dev demo policies -- prove the hitl_gate effect actually fires end-to-end
+# through the live gateway: a real Redis-backed ticket, reviewed via `interpose
+# review`, before the held call is allowed to proceed or is denied.
+policy: hello-echo-hitl-test-tool
+description: Local dev/demo policy -- holds hitl_tool for human review.
+applies_to:
+  server: hello-echo
+  tools: [hitl_tool]
+effect:
+  type: hitl_gate
+  reviewer_group: test-reviewers
+  timeout_seconds: 30
+audit:
+  severity: medium
+  tag: [demo]

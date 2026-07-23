@@ -1,8 +1,8 @@
 # Local dev services. Postgres is the audit store (docs/INTERPOSE_SCOPING.md Section
-# 6.7); Redis joins here in Phase 2 (Day 6, HITL). Phase 1 Day 5 adds the gateway and
-# a mock upstream MCP server to this file for full docker-compose integration testing
-# (Section 14.5) -- for now this is just enough to develop and test the audit store
-# against a real Postgres.
+# 6.7). Redis (Section 6.8) joins in Phase 2 Day 6 for the HITL ticket queue -- session
+# state (risk scores etc.) stays deferred until something actually reads/writes it.
+# Containerizing the gateway + a mock upstream for a fuller docker-compose stack is
+# still deferred to Phase 2 Day 9 (Helm), per the Day 5 note in docs/ROADMAP.md.
 services:
   postgres:
     image: postgres:16
@@ -18,6 +18,16 @@ services:
       - interpose_postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U interpose -d interpose"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 2s
       timeout: 3s
       retries: 20

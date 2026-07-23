@@ -1,9 +1,9 @@
 """Same echo tool as examples/hello-mcp-echo, but served over the streamable-HTTP
 transport instead of stdio -- this is the transport Interpose's gateway proxies (see
 concepts/09-mcp-handshake-and-transports.md). Used as the trivial upstream server for
-testing the gateway's naive-forward path (docs/ROADMAP.md Phase 1, Day 1) and,
-via `dangerous_tool` and `throttled_tool`, the policy stage (Phase 1, Days 3/5 --
-see config/policies/).
+testing the gateway's naive-forward path (docs/ROADMAP.md Phase 1, Day 1) and, via
+`dangerous_tool`, `throttled_tool`, and `hitl_tool`/`hitl_timeout_tool`, the policy
+stage (Phase 1 Days 3/5, Phase 2 Day 6 -- see config/policies/).
 """
 
 from mcp.server.fastmcp import FastMCP
@@ -30,6 +30,21 @@ def throttled_tool() -> str:
     """A tool that only exists to be rate-limited -- see
     config/policies/hello-echo-throttle.yaml."""
     return "called"
+
+
+@mcp.tool()
+def hitl_tool() -> str:
+    """A tool that only exists to be HITL-gated -- see
+    config/policies/hello-echo-hitl.yaml. Should only ever execute after an
+    approval through `interpose review approve`."""
+    return "approved and executed"
+
+
+@mcp.tool()
+def hitl_timeout_tool() -> str:
+    """Same as hitl_tool, but its policy uses a very short timeout, so a test can
+    exercise the "nobody reviewed it in time" path without waiting long."""
+    return "should never be reached (nobody approves this one in the tests)"
 
 
 if __name__ == "__main__":

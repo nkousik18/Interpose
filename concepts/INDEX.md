@@ -27,5 +27,6 @@ concept was introduced.
 | 18 | [postgres-sqlalchemy-alembic.md](18-postgres-sqlalchemy-alembic.md) | Why a real database now, what an ORM buys you, migrations as a version-controlled paper trail for schema changes, one shared DB-URL setting |
 | 19 | [hash-chained-audit-log.md](19-hash-chained-audit-log.md) | What tamper-evidence means and how a hash chain achieves it, the genesis hash, why one call can produce two append-only rows, the advisory-lock concurrency fix, app-clock vs. DB-server-time tradeoff |
 | 20 | [cli-with-typer.md](20-cli-with-typer.md) | Why Typer needed no new dependency, the single-command-collapses-the-CLI gotcha, why `--since` filters the report but never skips verifying earlier history |
+| 21 | [redis-and-the-hitl-hold.md](21-redis-and-the-hitl-hold.md) | What Redis is and why it fits ticket data, why the gateway blocks-and-polls rather than the doc's literal "immediate held response," the resulting 3-shape audit trail |
 
 More get added as we build — each new one lands here the day it's created.
