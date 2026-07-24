@@ -1,0 +1,13 @@
+# Non-secret gateway/control-plane configuration -- Section 11.5's `interpose-config`
+# ConfigMap. Everything sensitive (DSNs, API keys) lives in the Secret instead
+# (secret-app.yaml), never here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "interpose.fullname" . }}-config
+  labels:
+    {{- include "interpose.labels" . | nindent 4 }}
+data:
+  GROQ_MODEL: {{ .Values.llm.groqModel | quote }}
+  CONFIG_PATH: /etc/interpose/upstreams/upstreams.yaml
+  POLICY_DIR: /etc/interpose/policies

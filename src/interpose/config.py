@@ -21,6 +21,18 @@ class Settings(BaseSettings):
     # anticipated alternative provider. See concepts/24-narrative-generation-with-a-real-llm.md.
     groq_api_key: str | None = None
     groq_model: str = "openai/gpt-oss-20b"
+    # Bind address/port for `python -m interpose.gateway`. 127.0.0.1 stays the default
+    # for bare-metal local dev (docker-compose Postgres/Redis, no container around the
+    # gateway itself); the Helm chart's Deployment overrides GATEWAY_HOST=0.0.0.0 via
+    # env, since inside a Pod the gateway must accept traffic from the Service, not
+    # just localhost. See concepts/26-helm-and-the-interpose-chart.md.
+    gateway_host: str = "127.0.0.1"
+    gateway_port: int = 8000
+    # Same local-file-vs-mounted-ConfigMap duality as the rest of config/ -- unchanged
+    # default for local dev; the chart overrides these to the paths it mounts
+    # config/upstreams.yaml and config/policies/ at inside the container.
+    config_path: str = "config/upstreams.yaml"
+    policy_dir: str = "config/policies"
 
 
 @lru_cache

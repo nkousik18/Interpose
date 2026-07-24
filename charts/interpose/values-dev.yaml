@@ -1,0 +1,20 @@
+# Local kind overrides -- what scripts/dev-up.sh installs with
+# (`helm install interpose ./charts/interpose -f values-dev.yaml`). Makes the release
+# fully self-contained: embedded Postgres/Redis (already the values.yaml default) plus
+# a dev-created Secret, so `helm install` alone brings up a healthy stack with no
+# external Secret to pre-create first.
+#
+# Never put a real GROQ_API_KEY in this file -- it's committed to git. Pass it at
+# install time instead: `helm install ... -f values-dev.yaml --set llm.groqApiKey=$GROQ_API_KEY`.
+# Without it, the control plane's narrative-generation calls fail closed to their
+# non-LLM fallback (see concepts/24-narrative-generation-with-a-real-llm.md) -- the
+# stack still comes up healthy either way, which is why this isn't a required value.
+
+secrets:
+  createDev: true
+
+grafana:
+  # Local-only convenience default -- fine because Grafana here is only reachable via
+  # `kubectl port-forward`, never exposed. Do not reuse this value.yaml as a starting
+  # point for anything internet-facing.
+  adminPassword: admin

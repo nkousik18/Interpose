@@ -1,0 +1,13 @@
+# Local dev cluster shape (docs/INTERPOSE_SCOPING.md Section 11.3): one control-plane
+# node + two workers, enough to demonstrate real multi-node scheduling (pod
+# anti-affinity, node selectors) without being heavy on a laptop. Nothing in the chart
+# actually uses anti-affinity/node-selection yet (single replica everywhere per Day 9's
+# scope) -- this just makes the cluster shape honest about what a "real" deploy target
+# looks like, and ready for that once replicaCount > 1 is actually exercised.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: interpose-dev
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker

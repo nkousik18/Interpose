@@ -1,0 +1,73 @@
+{
+  "uid": "interpose-policy-governance",
+  "title": "Interpose — Policy & Governance",
+  "tags": ["interpose"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-24h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "How to read this dashboard",
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
+      "options": {
+        "mode": "markdown",
+        "content": "**Dashboard 2 of 4 (Section 12.4).** Policy fire counts, HITL queue depth and response time, control-plane (A2/A4) anomaly and incident signal.\n\n**Status as of Phase 2 Day 9: schema only, no data yet** -- same caveat as Dashboard 1. `interpose_policy_*` and `interpose_hitl_*` metrics don't exist yet; the underlying events (policy decisions, HITL ticket lifecycle) are real and audited in Postgres today (Day 3, Day 6), but nothing aggregates them into Prometheus metrics until the Phase 3/4 telemetry work. Until then, the same signal is queryable directly from `audit_entries` -- see `docs/runbook/audit-queries.md`."
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Policy fires per policy, by outcome",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "targets": [
+        {"expr": "sum by (policy, outcome) (rate(interpose_policy_fired_total[5m]))", "legendFormat": "{{policy}} ({{outcome}})"}
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "HITL queue depth over time",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "targets": [
+        {"expr": "interpose_hitl_queue_depth", "legendFormat": "{{reviewer_group}}"}
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "HITL median response time, by reviewer group",
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(interpose_hitl_response_seconds_bucket[1h])) by (le, reviewer_group))", "legendFormat": "{{reviewer_group}}"}
+      ]
+    },
+    {
+      "id": 5,
+      "type": "piechart",
+      "title": "HITL approve / deny / timeout ratio",
+      "gridPos": {"h": 6, "w": 8, "x": 8, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "targets": [
+        {"expr": "sum by (decision) (interpose_hitl_decisions_total)", "legendFormat": "{{decision}}"}
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Anomaly clusters (A2) / incident promotions (A4)",
+      "gridPos": {"h": 6, "w": 8, "x": 16, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "targets": [
+        {"expr": "sum(interpose_anomaly_flags_total)", "legendFormat": "anomaly flags"},
+        {"expr": "sum(interpose_incidents_total)", "legendFormat": "incidents"}
+      ]
+    }
+  ]
+}

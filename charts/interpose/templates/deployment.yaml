@@ -1,0 +1,76 @@
+# The gateway Deployment -- includes the in-process control-plane loop (see
+# values.yaml's replicaCount comment for why this is one Deployment, not the two
+# Section 11.5 describes).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "interpose.fullname" . }}
+  labels:
+    {{- include "interpose.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "interpose.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gateway
+  template:
+    metadata:
+      labels:
+        {{- include "interpose.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: gateway
+    spec:
+      serviceAccountName: {{ include "interpose.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: gateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: {{ include "interpose.fullname" . }}-config
+            - secretRef:
+                name: {{ include "interpose.appSecretName" . }}
+          volumeMounts:
+            - name: policies
+              mountPath: /etc/interpose/policies
+            - name: upstreams
+              mountPath: /etc/interpose/upstreams
+          # Liveness: process is up, nothing external checked -- see app.py's /healthz
+          # docstring for why a liveness probe shouldn't depend on Postgres/Redis.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          # Readiness: Postgres + Redis genuinely reachable (app.py's /readyz).
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 3
+          # Startup: policy-pack compilation + first Postgres/Redis connections can take
+          # longer than steady-state liveness/readiness periods tolerate, especially
+          # against a freshly-started embedded Postgres pod on a laptop -- 30 * 2s = up
+          # to 60s before liveness/readiness probing even begins (Section 11.5).
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: policies
+          configMap:
+            name: {{ include "interpose.fullname" . }}-policies
+        - name: upstreams
+          configMap:
+            name: {{ include "interpose.fullname" . }}-upstreams

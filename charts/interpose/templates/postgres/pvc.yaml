@@ -1,0 +1,15 @@
+{{- if .Values.postgres.embedded }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "interpose.fullname" . }}-postgres
+  labels:
+    {{- include "interpose.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.postgres.storage }}
+{{- end }}

@@ -46,6 +46,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from mcp.types import ErrorData, JSONRPCError, JSONRPCMessage
 from pydantic import ValidationError
+from sqlalchemy import text
 
 from interpose.audit.chain import canonical_json
 from interpose.audit.db import create_engine, create_session_factory
@@ -56,15 +57,13 @@ from interpose.control_plane.graph import build_graph
 from interpose.control_plane.runner import run_forever
 from interpose.control_plane.state import Decision as CPDecision
 from interpose.control_plane.state import DecisionEvent, PolicyResult
-from interpose.gateway.routing import DEFAULT_CONFIG_PATH, RoutingTable, load_routing_table
+from interpose.gateway.routing import RoutingTable, load_routing_table
 from interpose.policies.loader import load_policy_pack
 from interpose.policies.policyset import Outcome, PolicyDecision, PolicyEngine, RateLimiter
 from interpose.session import hitl
 from interpose.session.redis_client import create_async_redis
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_POLICY_DIR = Path("config/policies")
 
 # JSON-RPC reserves -32000 to -32099 for implementation-defined server errors.
 POLICY_DENIED_ERROR_CODE = -32001
@@ -89,21 +88,26 @@ STRIP_RESPONSE_HEADERS = {"content-length", "connection", "transfer-encoding", "
 
 
 def create_app(
-    config_path: Path | str = DEFAULT_CONFIG_PATH,
-    policy_dir: Path | str = DEFAULT_POLICY_DIR,
+    config_path: Path | str | None = None,
+    policy_dir: Path | str | None = None,
     database_url: str | None = None,
     redis_url: str | None = None,
 ) -> FastAPI:
+    settings = get_settings()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        app.state.routing = load_routing_table(config_path)
-        app.state.policy_engine = PolicyEngine(load_policy_pack(policy_dir))
+        app.state.routing = load_routing_table(config_path or settings.config_path)
+        app.state.policy_engine = PolicyEngine(
+            load_policy_pack(policy_dir or settings.policy_dir)
+        )
         app.state.rate_limiter = RateLimiter()
         app.state.http_client = httpx.AsyncClient()
-        engine = create_engine(database_url or get_settings().database_url)
+        engine = create_engine(database_url or settings.database_url)
         session_factory = create_session_factory(engine)
         app.state.audit_store = AuditStore(session_factory)
-        app.state.redis = create_async_redis(redis_url or get_settings().redis_url)
+        app.state.db_engine = engine
+        app.state.redis = create_async_redis(redis_url or settings.redis_url)
 
         app.state.event_bus = EventBus()
         control_plane_graph = build_graph(session_factory, app.state.redis)
@@ -123,6 +127,20 @@ def create_app(
             await engine.dispose()
 
     app = FastAPI(title="Interpose gateway", lifespan=lifespan)
+
+    @app.get("/healthz")
+    async def healthz() -> Response:
+        # Liveness: the process is up and serving HTTP at all. Deliberately checks
+        # nothing external -- that's /readyz's job. A liveness probe that depends on
+        # Postgres/Redis would make Kubernetes restart a perfectly healthy gateway pod
+        # during a transient DB blip, which is the wrong response to that failure.
+        return JSONResponse({"status": "ok"})
+
+    @app.get("/readyz")
+    async def readyz(request: Request) -> Response:
+        checks = await _readiness_checks(request.app)
+        status_code = 200 if all(checks.values()) else 503
+        return JSONResponse(checks, status_code=status_code)
 
     @app.api_route("/mcp/{server_name}", methods=["GET", "POST", "DELETE"])
     async def proxy_mcp(server_name: str, request: Request) -> Response:
@@ -193,6 +211,28 @@ def create_app(
         )
 
     return app
+
+
+async def _readiness_checks(app: FastAPI) -> dict[str, bool]:
+    """Section 11.5's readiness probe: gateway is ready only if it can actually reach
+    both stateful dependencies it needs on the hot path (audit writes, HITL/session
+    state) -- not just that the process started."""
+    postgres_ok = False
+    try:
+        async with app.state.db_engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        postgres_ok = True
+    except Exception:
+        logger.warning("gateway.readyz_postgres_unreachable", exc_info=True)
+
+    redis_ok = False
+    try:
+        await app.state.redis.ping()
+        redis_ok = True
+    except Exception:
+        logger.warning("gateway.readyz_redis_unreachable", exc_info=True)
+
+    return {"postgres": postgres_ok, "redis": redis_ok}
 
 
 def _extract_agent_id(request: Request) -> str | None:

@@ -1,0 +1,42 @@
+{{- if .Values.redis.embedded }}
+# No PVC -- HITL tickets have a TTL (interpose.session.hitl) and session-risk hashes
+# are recomputed live; losing Redis state on a dev pod restart is an acceptable
+# tradeoff for not needing a second PVC in a laptop-sized cluster.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "interpose.fullname" . }}-redis
+  labels:
+    {{- include "interpose.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "interpose.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        {{- include "interpose.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          ports:
+            - name: redis
+              containerPort: 6379
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 2
+            failureThreshold: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+{{- end }}

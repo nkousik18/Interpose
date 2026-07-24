@@ -1,0 +1,40 @@
+{{- if .Values.grafana.enabled }}
+# Grafana's own provisioning config (not the dashboard content itself, which is
+# configmap-dashboards.yaml) -- tells Grafana where to find a datasource and where to
+# look on disk for dashboard JSON to auto-load. Standard Grafana provisioning
+# directory layout: /etc/grafana/provisioning/{datasources,dashboards}/*.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "interpose.fullname" . }}-grafana-provisioning
+  labels:
+    {{- include "interpose.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: interpose-prometheus
+        type: prometheus
+        access: proxy
+        # Placeholder -- no Prometheus is deployed by this chart yet (Section 11.5's
+        # PodMonitor + Prometheus operator are a named, deferred Day 9 gap: nothing
+        # exports metrics for it to scrape yet either). Provisioning a datasource that
+        # points nowhere is harmless -- Grafana starts fine regardless, panels just
+        # show a connection error until Phase 3/4 wires up the real thing at this URL.
+        url: http://{{ include "interpose.fullname" . }}-prometheus.{{ .Release.Namespace }}.svc.cluster.local:9090
+        isDefault: true
+        editable: false
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: interpose
+        orgId: 1
+        folder: "Interpose"
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards
+{{- end }}

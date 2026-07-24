@@ -10,6 +10,128 @@ Newest entry first. One entry per work session (not necessarily per calendar day
 
 ---
 
+## 2026-07-24 — Phase 2 Day 9: Helm chart, first real kind deployment
+
+**What happened:**
+- Two upfront scoping calls made explicitly with the user before writing any chart
+  code: (1) chart **one** Deployment, matching the real in-process
+  gateway+control-plane architecture (Day 7's `run_forever` asyncio task), not the two
+  Section 11.5 describes -- charting a second, standalone control-plane Deployment
+  would mean it does nothing, since nothing in the code lets it run outside the
+  gateway process; (2) build the **MVP slice** of Section 11.4/11.5 for real and name
+  the rest (ingress, HPA, RBAC, NetworkPolicy, PodMonitor, Spark CRDs, pod-security
+  hardening) as explicit deferred gaps, same pattern as prior days, rather than write
+  YAML nothing exercises yet.
+- Added real code the chart needed, not just infra: `/healthz` (liveness -- checks
+  nothing external, deliberately, so a transient Postgres blip doesn't get a healthy
+  gateway pod restarted) and a genuinely-checking `/readyz` (Postgres `SELECT 1` +
+  Redis `PING`) on the gateway; `gateway_host`/`gateway_port`/`config_path`/
+  `policy_dir` added to `Settings` so the same image/entrypoint works correctly both
+  bare (`uv run python -m interpose.gateway`, unchanged default behavior) and
+  container-first (Docker image bakes `GATEWAY_HOST=0.0.0.0`, the chart mounts
+  ConfigMaps at paths `CONFIG_PATH`/`POLICY_DIR` point to). Two new integration tests.
+- Multi-stage `Dockerfile` (`ghcr.io/astral-sh/uv` builder stage, `python:3.12-slim`
+  runtime, non-root `uid 10001`, self-contained default `config/` baked in so
+  `docker run` works standalone too). Smoke-tested directly against the existing
+  docker-compose Postgres/Redis before touching Kubernetes at all.
+- Built `charts/interpose/`: Chart.yaml, values.yaml (production-leaning defaults) +
+  values-dev.yaml (dev overlay -- chart-created Secret, embedded Postgres/Redis
+  already the default), `_helpers.tpl` (naming/labels + the embedded-vs-external
+  Postgres/Redis DSN-assembly helpers), Deployment/Service/ConfigMaps/Secret for the
+  gateway, first-party (not Bitnami) dev-mode Postgres/Redis Deployments gated by
+  `postgres.embedded`/`redis.embedded` -- deliberately not a sub-chart dependency,
+  since an external chart-repo dependency buys nothing for a dev-only convenience
+  toggle production never uses regardless. Added a `post-install`/`post-upgrade` Helm
+  hook Job (`migrate-job.yaml`) running `alembic upgrade head` -- a gap noticed while
+  building, not in the original file list: without it, a fresh embedded Postgres pod
+  has no schema, and `/readyz` would report healthy (it only checks connectivity) while
+  every real audit write 500s.
+- Grafana deployed with all four Section 12.4 dashboards (`files/dashboards/*.json`,
+  provisioned via ConfigMap + Grafana's file-based dashboard-provider mechanism) --
+  Gateway Health, Policy & Governance, AML Pack, Cost Telemetry. Each dashboard's own
+  "how to read" text panel states plainly that it's schema-only: no Prometheus is
+  deployed by this chart (no PodMonitor either -- named, deferred), and nothing
+  exports `/metrics` yet, so every panel query is a provisional metric name, not a
+  working query, until Phase 3/4.
+- `kind.yaml` (1 control-plane + 2 workers, Section 11.3's shape). `scripts/dev-up.sh`
+  (idempotent: reuses an existing cluster, `helm upgrade --install`, backgrounded
+  port-forwards for gateway :8000 and Grafana :3000) / `scripts/dev-down.sh` (kills
+  the port-forwards, `kind delete cluster`). Deliberately skips cert-manager and
+  ingress-nginx, unlike Section 11.3's literal script -- local dev reaches everything
+  via `kubectl port-forward`, so there's no TLS/ingress story to stand up yet.
+- **Live-tested against a real kind cluster, twice, not just `helm template`.** First
+  run surfaced a real bug: the gateway `Service`'s selector matched on
+  `app.kubernetes.io/name`/`instance` only, which every workload in the release
+  shares (gateway, Postgres, Redis, Grafana) -- so `kubectl port-forward svc/gateway`
+  nondeterministically connected to whichever pod the API happened to return (in this
+  run, Redis), failing with a confusing "pod does not have a named port 'http'"
+  error. Fixed by adding an `app.kubernetes.io/component` label to every
+  Deployment/Service selector. Rendering the chart with `helm template` never would
+  have caught this -- it doesn't resolve what a selector actually matches at runtime,
+  only a real cluster does. Documented as its own section in the new concept file.
+- Full clean re-run after the fix: **99s and 110s** (both well under the 5-minute
+  target) from `kind create` to all four pods `Running`; `/healthz`/`/readyz` both 200
+  through a port-forward (readyz genuinely raced Postgres startup once -- 503 then 200
+  a few seconds later, proving the probe logic is real, not a stub); the migration Job
+  ran, completed, and deleted itself (`hook-delete-policy`), confirmed via `psql \dt`
+  showing `audit_entries` actually exists; all four dashboards visible under the
+  "Interpose" folder via Grafana's `/api/search`. `scripts/dev-down.sh` confirmed to
+  leave no cluster, no stray port-forward processes, no pidfile.
+- Added `helm lint`/`helm template` as a new CI job (Section 11.4's own requirement).
+- Added `concepts/26-helm-and-the-interpose-chart.md`: what Helm/a chart/a release
+  actually are vs. raw `kubectl apply` or Kustomize, Go templating and
+  `_helpers.tpl`, the Service-selector bug as a worked example of what live-cluster
+  testing catches that template-rendering can't, the embedded-vs-external toggle
+  pattern, and the liveness/readiness/startup probe distinction.
+- **159 total tests green** (2 new `/healthz`/`/readyz` integration tests);
+  `ruff check .` clean repo-wide; `helm lint`/`helm template` both clean.
+
+**Decisions made:**
+- One Deployment for gateway + control-plane, not two -- charts what's real, not what
+  Section 11.5 originally pictured. Splitting control-plane into an independently
+  scalable service is named v0.2 scope.
+- MVP chart scope now, full enterprise scope (ingress/RBAC/NetworkPolicy/PodMonitor/
+  Spark CRDs/pod-security hardening) deferred with per-item reasons in
+  `charts/interpose/README.md`, not built speculatively.
+- First-party dev Postgres/Redis templates, not Bitnami sub-charts -- avoids an
+  external chart-repo dependency for a toggle production never exercises anyway.
+- A Helm hook migration Job is required infrastructure, not optional polish -- added
+  even though it wasn't in the original per-file plan, because without it the chart
+  would "deploy successfully" while being silently broken for real audit writes.
+
+**Current state:**
+- Phase 2 Day 9 done and checked off. The full stack (gateway+control-plane,
+  Postgres, Redis, Grafana) deploys to a real local kind cluster via Helm in under two
+  minutes, verified live twice. Day 10 (buffer + integration polish) is what's left
+  before Phase 2's gate is fully met -- notably, the HITL cycle and control-plane
+  agents have been verified end-to-end via docker-compose (Days 6-8) but not yet
+  through the kind-deployed stack specifically, since no MCP upstream server is
+  deployed in-cluster yet (nothing to make a real tool call against there until Phase
+  3's AML servers, or a demo echo server, land).
+
+**Next steps:**
+1. Day 10 — buffer + integration polish: confirm all Week 1 + Week 2 integration
+   tests green in CI (not just locally), README quickstart draft, first distributed
+   trace visible in Jaeger, adversarial test suite skeleton (fixture generator, no
+   attacks yet).
+2. Worth deciding early in Day 10: whether to deploy the existing `hello-mcp-http-echo`
+   example server in-cluster (via `dev/mcp-servers/`, per Section 11.3 step 5) purely
+   to exercise a real end-to-end MCP call through the kind-deployed gateway, or leave
+   that gap open until Phase 3's real AML MCP servers arrive -- not yet decided.
+3. Commit/push/PR/merge Day 9's work per the established per-day cadence before
+   starting Day 10.
+
+**Loose ends / reminders:**
+- The Kaggle API token pasted into an earlier chat message should still be rotated
+  (Settings → API → regenerate) — flagged again, still not confirmed done.
+- Postgres append-only role enforcement (Section 10.7) still not implemented — same
+  gap noted at the end of Day 4, still open.
+- No automated kind-based deploy test in CI yet (only `helm lint`/`helm template`,
+  which don't catch runtime issues like the Service-selector bug this session found
+  live) — worth considering for Phase 4 hardening, not required for Day 9's gate.
+
+---
+
 ## 2026-07-23 — Phase 2 Day 8: remaining control-plane agents, first real LLM integration
 
 **What happened:**
