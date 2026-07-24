@@ -151,6 +151,38 @@ chart + `scripts/dev-up.sh`, first distributed trace visible in Jaeger.
       fixed and covered by permanent regression tests. Added `tests/conftest.py` so
       the automated suite never depends on a developer's local API key. 154 total
       tests green.
+- [x] Day 9 — Helm chart (`charts/interpose/`) + first real kind deployment. Added
+      `/healthz` (liveness, checks nothing external) and a genuinely-checking
+      `/readyz` (Postgres + Redis reachability) to the gateway, plus `GATEWAY_HOST`/
+      `GATEWAY_PORT`/`CONFIG_PATH`/`POLICY_DIR` settings so the same image runs
+      correctly both bare (`uv run`) and in a container. Multi-stage `Dockerfile`
+      (uv-based build, non-root runtime, self-contained default `config/`). One
+      Deployment, not the two Section 11.5 describes -- the control plane is an
+      in-process asyncio task (Day 7), not a standalone process, so charting two
+      Deployments would mean one does nothing; documented as a deliberate deviation
+      (see chart README and concept 26). First-party (not Bitnami) dev Postgres/Redis
+      templates gated by `postgres.embedded`/`redis.embedded`, a `post-install` Helm
+      hook Job running `alembic upgrade head` before the gateway takes traffic, and
+      Grafana with all four Section 12.4 dashboards provisioned (schema only -- no
+      Prometheus deployed yet, nothing exports `/metrics`, both named Phase 3/4 gaps).
+      Scope deliberately trimmed from Section 11.4/11.5's full enterprise chart --
+      ingress, RBAC, NetworkPolicy, PodMonitor, Spark CRDs, and pod-security hardening
+      (distroless/seccomp/`readOnlyRootFilesystem`) all named and deferred in
+      `charts/interpose/README.md`'s gap table, each for a concrete reason (no
+      dependency installed / nothing to exercise it yet), not silently dropped.
+      **Live-tested against a real kind cluster, twice** (`scripts/dev-up.sh` /
+      `dev-down.sh`): first run surfaced a real bug -- the gateway `Service`'s
+      selector matched all four workload pods (gateway/postgres/redis/grafana share
+      `name`/`instance` labels), so `kubectl port-forward` nondeterministically
+      connected to the wrong pod; fixed by adding an `app.kubernetes.io/component`
+      label to every selector -- the kind of bug only a real cluster (not
+      `helm template`) can surface. Verified end-to-end: 99s and 110s
+      (both well under the 5-minute target) from `kind create` to all four pods
+      Running, `/healthz`/`/readyz` both 200 through a port-forward, the migration Job
+      ran and cleaned itself up (`audit_entries` table confirmed present via `psql`),
+      and all four dashboards visible via Grafana's API. `helm lint`/`helm template`
+      added to CI. 159 total tests green (2 new `/healthz`/`/readyz` integration
+      tests).
 
 **Gate:** full stack deploys to `kind` via Helm; a HITL cycle completes end-to-end with a
 manual approval; hash chain verifies; control-plane agents produce enriched decision events.

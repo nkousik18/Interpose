@@ -1,0 +1,64 @@
+{
+  "uid": "interpose-gateway-health",
+  "title": "Interpose — Gateway Health",
+  "tags": ["interpose"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-6h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "How to read this dashboard",
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
+      "options": {
+        "mode": "markdown",
+        "content": "**Dashboard 1 of 4 (Section 12.4).** RED metrics (Rate, Errors, Duration) for the gateway's hot path, plus per-upstream-server health.\n\n**Status as of Phase 2 Day 9: schema only, no data yet.** Nothing exports `interpose_gateway_*` metrics to Prometheus yet -- that's a Phase 3/4 item (a `/metrics` endpoint via `prometheus-client` or OpenTelemetry, plus a Prometheus deployment to scrape it; this chart doesn't install Prometheus either). Panel queries below are provisional metric names, not yet emitted anywhere -- treat this dashboard as the intended shape, not a working view."
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Requests / sec (by outcome)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "targets": [
+        {"expr": "sum by (outcome) (rate(interpose_gateway_requests_total[5m]))", "legendFormat": "{{outcome}}"}
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Latency percentiles (p50 / p95 / p99)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(interpose_gateway_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p50"},
+        {"expr": "histogram_quantile(0.95, sum(rate(interpose_gateway_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95"},
+        {"expr": "histogram_quantile(0.99, sum(rate(interpose_gateway_request_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p99"}
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Error rate (upstream_error / total)",
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "targets": [
+        {"expr": "sum(rate(interpose_gateway_requests_total{outcome=\"UPSTREAM_ERROR\"}[5m])) / sum(rate(interpose_gateway_requests_total[5m]))"}
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Upstream MCP server health",
+      "gridPos": {"h": 6, "w": 16, "x": 8, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "targets": [
+        {"expr": "interpose_upstream_up"}
+      ]
+    }
+  ]
+}

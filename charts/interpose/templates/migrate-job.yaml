@@ -1,0 +1,52 @@
+# Runs `alembic upgrade head` against Postgres once, before the gateway is expected to
+# take real traffic. Without this, a fresh embedded Postgres pod has no
+# audit_entries table -- /readyz would still report postgres:true (it only checks
+# `SELECT 1`, connectivity, not schema) while every real tool-call write 500s. A
+# post-install/post-upgrade hook, not an initContainer on the gateway Deployment
+# itself, because it only needs to run once per release change, not once per gateway
+# pod replica/restart.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "interpose.fullname" . }}-migrate
+  labels:
+    {{- include "interpose.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "interpose.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          envFrom:
+            - secretRef:
+                name: {{ include "interpose.appSecretName" . }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              python -c "
+              import socket, sys, time
+              host, port = '{{ include "interpose.postgresHost" . }}', {{ include "interpose.postgresPort" . }}
+              for _ in range(60):
+                  try:
+                      socket.create_connection((host, port), timeout=2).close()
+                      sys.exit(0)
+                  except OSError:
+                      time.sleep(2)
+              sys.exit('timed out waiting for %s:%s' % (host, port))
+              "
+              alembic upgrade head

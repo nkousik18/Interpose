@@ -17,6 +17,14 @@ jobs:
       - run: uv sync --all-extras --dev
       - run: uv run ruff check .
 
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint charts/interpose -f charts/interpose/values-dev.yaml
+      - run: helm template interpose charts/interpose -f charts/interpose/values-dev.yaml --set llm.groqApiKey=dummy
+
   test:
     runs-on: ubuntu-latest
     services:

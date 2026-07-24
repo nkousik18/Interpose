@@ -1,0 +1,73 @@
+{
+  "uid": "interpose-aml-pack",
+  "title": "Interpose — AML Pack (demo)",
+  "tags": ["interpose", "aml"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-24h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "How to read this dashboard",
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
+      "options": {
+        "mode": "markdown",
+        "content": "**Dashboard 3 of 4 (Section 12.4).** Demo-specific: OFAC sanctions-check volume, transaction-graph query patterns, structuring alerts, and `mark_investigated` outcome mix.\n\n**Status as of Phase 2 Day 9: schema only, no data at all yet.** This dashboard's entire subject matter -- the OFAC MCP server and transaction-graph MCP server -- doesn't exist until Phase 3 (Days 11-12). Shipped now purely as the intended shape; every panel here is inert until the AML pack is built."
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "OFAC call volume + sanctions match rate",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "targets": [
+        {"expr": "sum(rate(interpose_ofac_calls_total[5m]))", "legendFormat": "calls/s"},
+        {"expr": "sum(rate(interpose_ofac_matches_total[5m])) / sum(rate(interpose_ofac_calls_total[5m]))", "legendFormat": "match rate"}
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Transaction-graph query patterns",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "targets": [
+        {"expr": "sum by (query_type) (rate(interpose_txgraph_queries_total[5m]))", "legendFormat": "{{query_type}}"}
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Structuring alerts",
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "targets": [
+        {"expr": "sum(increase(interpose_structuring_alerts_total[24h]))"}
+      ]
+    },
+    {
+      "id": 5,
+      "type": "piechart",
+      "title": "mark_investigated: denied / HITL-approved / auto-approved",
+      "gridPos": {"h": 6, "w": 8, "x": 8, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "targets": [
+        {"expr": "sum by (outcome) (interpose_mark_investigated_total)", "legendFormat": "{{outcome}}"}
+      ]
+    },
+    {
+      "id": 6,
+      "type": "histogram",
+      "title": "Session-level risk score distribution",
+      "gridPos": {"h": 6, "w": 8, "x": 16, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "targets": [
+        {"expr": "interpose_session_risk_score"}
+      ]
+    }
+  ]
+}

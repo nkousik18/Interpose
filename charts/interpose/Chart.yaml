@@ -1,0 +1,9 @@
+apiVersion: v2
+name: interpose
+description: Audit and policy gateway for MCP -- gateway, in-process LangGraph control plane, and dev-mode Postgres/Redis/Grafana.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/nkousik18/Interpose
+sources:
+  - https://github.com/nkousik18/Interpose

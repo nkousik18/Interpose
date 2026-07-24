@@ -1,0 +1,62 @@
+{
+  "uid": "interpose-cost-telemetry",
+  "title": "Interpose — Cost Telemetry",
+  "tags": ["interpose"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-24h", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "How to read this dashboard",
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
+      "options": {
+        "mode": "markdown",
+        "content": "**Dashboard 4 of 4 (Section 12.4).** LLM token spend by agent/session/tool, provider cost breakdown, projected monthly cost, sessions over threshold.\n\n**Status as of Phase 2 Day 9: schema only, no data yet.** The control plane makes real Groq calls today (Day 8: A2/A3/A4's LLM-backed narrative generation via `interpose.control_plane.llm`), but nothing records token counts or cost per call yet -- `generate_structured(...)` doesn't currently return usage data to its callers. Wiring that through, and exporting it as a metric, is a named Phase 3/4 gap, not a difference from the other three dashboards' \"doesn't exist yet\" (here the LLM calls this would measure are real; only the measurement itself is missing)."
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Token spend per agent",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "targets": [
+        {"expr": "sum by (agent) (rate(interpose_llm_tokens_total[5m]))", "legendFormat": "{{agent}}"}
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Cost per provider",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "targets": [
+        {"expr": "sum by (provider) (rate(interpose_llm_cost_usd_total[1h]))", "legendFormat": "{{provider}}"}
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Projected monthly cost (at current rate)",
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "targets": [
+        {"expr": "sum(rate(interpose_llm_cost_usd_total[1h])) * 24 * 30"}
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Sessions exceeding cost threshold",
+      "gridPos": {"h": 6, "w": 16, "x": 8, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "targets": [
+        {"expr": "interpose_session_cost_usd > 1"}
+      ]
+    }
+  ]
+}

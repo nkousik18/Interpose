@@ -37,3 +37,6 @@ charts/**/*.tgz
 
 # Logs
 *.log
+
+# Local dev cluster (scripts/dev-up.sh / dev-down.sh)
+.dev-up.pids

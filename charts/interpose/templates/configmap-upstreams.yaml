@@ -1,0 +1,20 @@
+# Stage 3 routing table (interpose.gateway.routing) -- the Kubernetes-native version
+# of the local dev config/upstreams.yaml file. Mounted at
+# /etc/interpose/upstreams/upstreams.yaml (see deployment.yaml).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "interpose.fullname" . }}-upstreams
+  labels:
+    {{- include "interpose.labels" . | nindent 4 }}
+data:
+  upstreams.yaml: |
+    servers:
+    {{- if .Values.upstreams.servers }}
+    {{- range $name, $server := .Values.upstreams.servers }}
+      {{ $name }}:
+        url: {{ $server.url | quote }}
+    {{- end }}
+    {{- else }}
+      {}
+    {{- end }}

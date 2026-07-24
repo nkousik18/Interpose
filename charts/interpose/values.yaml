@@ -1,0 +1,96 @@
+# Default values for the interpose chart. These lean toward a production shape
+# (external Postgres/Redis, no secrets created by the chart) -- values-dev.yaml layers
+# on top for a self-contained local kind install. See charts/interpose/README.md for
+# what's real today vs. named-and-deferred (Section 11.4/11.5 of the scoping doc is the
+# full enterprise spec; this chart builds the slice that something actually exercises).
+
+image:
+  repository: interpose
+  tag: dev
+  pullPolicy: IfNotPresent
+
+# One Deployment. The scoping doc's Section 11.5 describes gateway and control-plane
+# as separate Deployments (gateway scaled 2-10x via HPA, control-plane fixed at 1
+# replica) -- but Day 7 built the control-plane LangGraph loop as an in-process
+# asyncio.Task started at gateway startup (interpose.gateway.app's lifespan), not a
+# standalone process. Charting two Deployments from one image would mean one of them
+# does nothing; this chart charts what's real. Splitting control-plane into its own
+# scalable service, matching Section 11.5 literally, is v0.2 scope (also means
+# replicaCount can safely go above 1 today only because there's no per-agent-instance
+# session-affinity concern the current design doesn't already handle -- verify this
+# assumption again before actually increasing it).
+replicaCount: 1
+
+service:
+  port: 8000
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+# LLM provider config (interpose.control_plane.llm). groqApiKey here is a dev
+# convenience only, gated by secrets.createDev below -- production sets
+# secrets.existingSecretName to a Secret an external system (e.g.
+# external-secrets-operator syncing AWS Secrets Manager, per Section 11.5) already
+# populated with a GROQ_API_KEY key, and the chart never sees the raw value.
+llm:
+  groqModel: "openai/gpt-oss-20b"
+  groqApiKey: ""
+
+secrets:
+  # Dev-only escape hatch: chart creates a Secret from the values above. Never enable
+  # this against a values file that will be committed with a real key in it -- see
+  # values-dev.yaml's own comment on this, and .gitignore's `*.env` coverage which
+  # this deliberately does NOT extend to (a values file isn't .env, so don't paste a
+  # real key into values-dev.yaml -- pass it with `--set llm.groqApiKey=...` instead).
+  createDev: false
+  # If set, takes precedence over createDev -- name of a pre-existing Secret in this
+  # release's namespace with keys DATABASE_URL, REDIS_URL, GROQ_API_KEY.
+  existingSecretName: ""
+
+postgres:
+  # true: chart deploys a plain single-replica Postgres Deployment + PVC for local dev
+  # (charts/interpose/templates/postgres/) -- not a Bitnami sub-chart. Deliberate: an
+  # external chart-repo dependency (version pinning, `helm dependency build` needing
+  # network access, upstream breaking changes) buys nothing for a dev-only convenience
+  # toggle whose only job is "something answers on 5432 with the right schema" --
+  # production never uses this path regardless (RDS, per Section 11.6), so the
+  # sub-chart's internal sophistication was never the thing being demonstrated.
+  # false: postgres.host/port/database/user/password (or secrets.existingSecretName)
+  # point at an already-running instance.
+  embedded: true
+  host: ""
+  port: 5432
+  database: interpose
+  user: interpose
+  password: interpose_dev
+  storage: 1Gi
+
+redis:
+  # Same embedded-vs-external pattern and reasoning as postgres above.
+  embedded: true
+  host: ""
+  port: 6379
+
+grafana:
+  enabled: true
+  adminPassword: admin
+
+# ConfigMap contents for Stage 3 routing (interpose.gateway.routing). Empty by
+# default -- no MCP server is deployed inside the cluster by this chart yet (Phase 3's
+# OFAC / transaction-graph servers, or a demo echo server, are what would populate
+# this). A gateway with no configured upstreams still starts and passes /healthz +
+# /readyz; every /mcp/{name} call just 404s as "unknown_server" until an entry exists.
+upstreams:
+  servers: {}
+  # servers:
+  #   hello-echo:
+  #     url: "http://hello-echo.interpose-system.svc.cluster.local:9001/mcp"
+
+serviceAccount:
+  create: true
+  name: ""

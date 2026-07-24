@@ -1,0 +1,16 @@
+# Stage 4 policy pack (interpose.policies.loader.load_policy_pack) -- the demo
+# hello-echo-*.yaml policies from files/policies/, shipped as one ConfigMap key per
+# file so the mounted directory looks exactly like config/policies/ does locally.
+# Real AML pack policies replace these in Phase 3 (policies/packs/aml/ stays empty
+# until then).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "interpose.fullname" . }}-policies
+  labels:
+    {{- include "interpose.labels" . | nindent 4 }}
+data:
+  {{- range $path, $_ := .Files.Glob "files/policies/*.yaml" }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | indent 4 }}
+  {{- end }}
