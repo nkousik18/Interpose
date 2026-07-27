@@ -43,6 +43,12 @@ dev = [
 analytics = [
     "pyspark>=4.2.0",
 ]
+# Dependencies only the demo MCP servers under mcp-servers/ need -- isolated the same
+# way as `analytics`, since a bare gateway install has no use for them (Section
+# 6.16's module boundary: mcp-servers/ is deliberately separate from src/interpose/).
+mcp-servers = [
+    "rapidfuzz>=3.10",
+]
 
 [tool.ruff]
 line-length = 100
@@ -57,3 +63,9 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# Lets tests/unit/mcp_servers/ import ofac-sanctions' loader.py/models.py as plain
+# top-level modules, the same way server.py itself does when run directly (`python
+# mcp-servers/ofac-sanctions/src/server.py` puts that directory on sys.path) --
+# without needing __init__.py/package machinery for what's meant to be a standalone
+# service's source, not part of the interpose package.
+pythonpath = ["mcp-servers/ofac-sanctions/src"]

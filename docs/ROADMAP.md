@@ -251,6 +251,36 @@ Covers: OFAC sanctions MCP server, transaction-graph MCP server (DuckDB over the
 data), the LangGraph investigation agent, the 7-policy AML pack, the Spark telemetry/aggregation
 job, populated Grafana dashboards.
 
+- [x] Day 11 — OFAC sanctions MCP server (`mcp-servers/ofac-sanctions/`), its own
+      small standalone service, own `Dockerfile`, no dependency on `src/interpose/` --
+      stands in for a real production sanctions-screening API the gateway proxies to,
+      not something the gateway owns (Phase 3's transaction-graph server will follow
+      the same pattern). Three tools: `check_entity` (fuzzy-match against SDN primary
+      names only, filtered by entity type), `check_alias` (fuzzy-match against primary
+      names *and* every alternate identity), `get_entity_detail`. Fetches both
+      `sdn.csv` and, discovered missing during scoping, `alt.csv` (the aliases file --
+      without it `check_alias` would just be `check_entity` renamed) fresh from the
+      real Treasury API on startup; `OFAC_SDN_SOURCE`/`OFAC_ALT_SOURCE` override to a
+      local file for tests/offline dev. **Two real bugs found via this project's own
+      tests, not assumed:** (1) `rapidfuzz`'s default scorer is case-sensitive, and
+      OFAC's list is all-caps by convention -- a mixed-case query scored the *correct*
+      match at ~14%, losing to unrelated candidates, until `rapidfuzz.utils.
+      default_process` was added as the `processor`; (2) the real SDN CSV has no
+      header row, uses `-0-` as a null sentinel (including for a blank `sdn_type`,
+      which means "entity", not "unknown"), and joins multiple sanctions programs as
+      `PROGRAM1] [PROGRAM2` with no enclosing brackets -- all documented in
+      `data/README.md`'s new "OFAC file formats" section and handled explicitly in
+      `loader.py`, not assumed from the scoping doc. 13 new unit tests (pure
+      parsing/matching, no network) plus 4 new integration tests driving real
+      `check_entity`/`check_alias`/`get_entity_detail` calls through the live gateway
+      against small local fixture CSVs (4 real, public-domain SDN entries + 1 real
+      alias). **Live-verified twice**: once as a bare container hitting the real,
+      live Treasury API (log confirmed `entries=19157 aliases=20159` loaded, a real
+      MCP client got a genuine 100%-confidence match), and once through the actual
+      gateway's `/mcp/ofac-sanctions` route. New `mcp-servers` uv dependency group
+      (`rapidfuzz`) isolated from the core gateway install, same pattern as
+      `analytics`; CI updated to install it. 185 total tests green, `ruff` clean.
+
 **Gate:** AML demo runs end-to-end (agent → 40+ tool calls → HITL hold → resume →
 investigation report); Spark job aggregates 10M synthetic records; audit verification passes.
 

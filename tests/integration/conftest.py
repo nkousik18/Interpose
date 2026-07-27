@@ -1,9 +1,10 @@
-"""Shared fixture for gateway integration tests: runs the real gateway and the real
-trivial upstream MCP server (examples/hello-mcp-http-echo/) as live subprocesses on
-real ports. See test_gateway_naive_forward.py's module docstring for why real
-subprocesses rather than an in-process ASGI test client.
+"""Shared fixtures for gateway integration tests: runs the real gateway and real
+upstream MCP servers as live subprocesses on real ports. See
+test_gateway_naive_forward.py's module docstring for why real subprocesses rather
+than an in-process ASGI test client.
 """
 
+import os
 import socket
 import subprocess
 import sys
@@ -18,6 +19,8 @@ from interpose.session.redis_client import create_sync_redis
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 UPSTREAM_SCRIPT = REPO_ROOT / "examples" / "hello-mcp-http-echo" / "server.py"
+OFAC_SERVER_SCRIPT = REPO_ROOT / "mcp-servers" / "ofac-sanctions" / "src" / "server.py"
+OFAC_FIXTURES = REPO_ROOT / "mcp-servers" / "ofac-sanctions" / "tests" / "fixtures"
 
 
 def _wait_for_port(host: str, port: int, timeout: float = 10.0) -> None:
@@ -37,6 +40,34 @@ def upstream_and_gateway():
     gateway = subprocess.Popen([sys.executable, "-m", "interpose.gateway"], cwd=REPO_ROOT)
     try:
         _wait_for_port("127.0.0.1", 9001)
+        _wait_for_port("127.0.0.1", 8000)
+        yield
+    finally:
+        for proc in (gateway, upstream):
+            proc.terminate()
+        for proc in (gateway, upstream):
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+
+
+@pytest.fixture(scope="module")
+def ofac_upstream_and_gateway():
+    """Same shape as `upstream_and_gateway`, but with the OFAC sanctions server
+    instead of the echo server -- pointed at small local fixture CSVs
+    (OFAC_SDN_SOURCE/OFAC_ALT_SOURCE) rather than the real Treasury API, so this test
+    suite never depends on a live government service being reachable."""
+    ofac_env = {
+        **os.environ,
+        "OFAC_SDN_SOURCE": str(OFAC_FIXTURES / "sdn_sample.csv"),
+        "OFAC_ALT_SOURCE": str(OFAC_FIXTURES / "alt_sample.csv"),
+    }
+    upstream = subprocess.Popen([sys.executable, str(OFAC_SERVER_SCRIPT)], env=ofac_env)
+    gateway = subprocess.Popen([sys.executable, "-m", "interpose.gateway"], cwd=REPO_ROOT)
+    try:
+        _wait_for_port("127.0.0.1", 9002)
         _wait_for_port("127.0.0.1", 8000)
         yield
     finally:

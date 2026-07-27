@@ -10,6 +10,115 @@ Newest entry first. One entry per work session (not necessarily per calendar day
 
 ---
 
+## 2026-07-27 (cont'd 2) — Phase 3 Day 11: OFAC sanctions MCP server, real data quirks + a real fuzzy-matching bug
+
+**What happened:**
+- Started Phase 3 (AML Pack) at its natural entry point, Section 14.7's Day 11: the
+  OFAC sanctions MCP server.
+- Before writing any code, checked what Phase 0 actually downloaded vs. what Section
+  9.6 assumes: only `sdn.csv` existed locally, but `check_alias` ("alias-aware
+  search -- SDN entries often list multiple names") needs a second Treasury file,
+  `alt.csv` (Alternate Identities), which wasn't downloaded. Fetched it fresh from
+  the same `sanctionslistservice.ofac.treas.gov` API (20,159 real rows) -- without
+  it, `check_alias` would just be `check_entity` under a different name.
+- Discovered and documented the real shape of both files (`data/README.md`'s new
+  "OFAC file formats" section): no header row in either; `-0-` as a general null
+  sentinel, including for `sdn_type`, where blank means "entity" (business/
+  organization), not "unknown" -- only `individual`/`vessel`/`aircraft` are ever
+  spelled out explicitly; multiple sanctions programs joined as
+  `PROGRAM1] [PROGRAM2` with no enclosing brackets, not a normal delimiter; and the
+  live API's export is UTF-8 (many tutorials assume Windows-1252, a fact worth
+  checking rather than trusting).
+- Built `mcp-servers/ofac-sanctions/` as its own small standalone service (own
+  `Dockerfile`, own tiny `Settings`, no dependency on `src/interpose/`) --
+  deliberately mirrors how a real production sanctions-screening API would relate to
+  the gateway: an external system Interpose proxies to, not something the gateway
+  owns. Three tools: `check_entity` (fuzzy-match against SDN primary names only,
+  filtered by entity type), `check_alias` (fuzzy-match against primary names *and*
+  every alias, any type), `get_entity_detail`. `loader.py`'s parsing/matching
+  functions are pure (no network), unit-tested directly; `server.py` wires them into
+  a FastMCP app whose lifespan fetches both files fresh on startup by default
+  (`OFAC_SDN_SOURCE`/`OFAC_ALT_SOURCE` override to a local file, same "real by
+  default, overridable for tests" shape as the rest of this project's Settings).
+- **Found a real, non-obvious bug via this project's own tests**: `rapidfuzz`'s
+  default scorer (`fuzz.WRatio`) is case-sensitive, and the SDN list is all-caps by
+  Treasury convention. A realistically-cased query ("Aerocaribbean Airlines")
+  scored its own correct match at ~14% -- literal character-case mismatches read as
+  dissimilarity -- and lost to several unrelated candidates in the same list. Fixed
+  by passing `rapidfuzz.utils.default_process` (lowercases + normalizes) as the
+  `processor` on every match call; the same query now scores a perfect 100. The
+  first version of the code "worked" (no crash, returned a score) while being
+  silently wrong -- caught because a unit test used realistic mixed-case input
+  instead of the dataset's own casing.
+- Added a new uv dependency group, `mcp-servers` (`rapidfuzz`), isolated from the
+  core gateway install the same way `analytics` (pyspark) already is -- a bare
+  `interpose` install has no use for it. Updated CI's `test` job to
+  `--group mcp-servers` alongside `--dev`.
+- 13 new unit tests (`tests/unit/mcp_servers/test_ofac_loader.py`, pure
+  parsing/matching against real public-domain fixture rows, no network) plus 4 new
+  integration tests (`tests/integration/test_gateway_ofac.py`) driving real
+  `check_entity`/`check_alias`/`get_entity_detail` calls through the actual gateway
+  -- a new `ofac_upstream_and_gateway` fixture in `tests/integration/conftest.py`,
+  pointed at small local fixture CSVs (`mcp-servers/ofac-sanctions/tests/fixtures/`,
+  4 real SDN entries + 1 real alias) so the suite never depends on Treasury being
+  reachable. Along the way, learned a real FastMCP quirk worth documenting: a tool
+  returning a Union type (`SanctionsMatch | None`) wraps `structuredContent` under a
+  `"result"` key; a tool returning a single concrete model (`SDNEntry`) doesn't --
+  an integration test that assumed one shape for both failed until this was
+  understood, not guessed around.
+- **Live-verified twice, not just via the fixture-based automated suite**: first, a
+  bare container hitting the real, live Treasury API end-to-end -- log confirmed
+  `entries=19157 aliases=20159` loaded (D-2's "10,000+ SDN entries" shipped-when
+  criterion, met for real), and a real MCP client got a genuine 100%-confidence
+  match back. Second, the same real-data check driven through the actual gateway's
+  `/mcp/ofac-sanctions` route (via the fixture-CSV path, for a fast/reproducible
+  check).
+- Added `concepts/28-fuzzy-matching-and-sanctions-screening.md`: why exact-match
+  search doesn't work for this domain, rapidfuzz basics, the case-sensitivity bug as
+  a worked example, why `check_entity`/`check_alias` deliberately search different
+  corpora, and the `structuredContent` envelope quirk.
+- 185 total tests green (168 + 13 unit + 4 integration), `ruff check .` clean.
+
+**Decisions made:**
+- `mcp-servers/ofac-sanctions/` is its own standalone service (own Dockerfile, own
+  Settings, flat module imports via `pythonpath` in `pyproject.toml` rather than
+  package machinery) -- not a module under `src/interpose/`, and not folded into any
+  existing image. Matches Section 6.16's module boundary and previews how Phase 3's
+  `transaction-graph` server should be structured too.
+- `rapidfuzz` isolated to its own `mcp-servers` uv dependency group, not a core
+  dependency -- the gateway itself never needs it.
+
+**Current state:**
+- Phase 3 Day 11 is done. The OFAC sanctions MCP server is real, tested, and
+  live-verified against the actual Treasury API and the actual gateway.
+
+**Next steps:**
+1. Day 12 — the transaction-graph MCP server: DuckDB embedded with the subsampled
+   IBM AML data (already prepared in Phase 0), six tools per Section 9.6
+   (`query_transactions`, `get_account`, `neighbors`, `subgraph`,
+   `structuring_check`, `mark_investigated` -- the one write tool, which exists
+   solely to demonstrate HITL gating later in Day 14). Introduce DuckDB as a new
+   concept when this starts.
+2. Day 13 — the AML investigation agent (single-agent LangGraph client of
+   Interpose, distinct from Interpose's own multi-agent control plane).
+3. Day 14 — the real 7-policy AML pack (this is when `pii_redaction`'s
+   `NotImplementedError` stub and a response-side policy hook both need to become
+   real, per this session's adversarial-suite gap notes from Day 10).
+4. Day 15 — Spark telemetry + full AML demo end-to-end.
+5. Commit/push/PR/merge this session's Day 11 work per the established per-day
+   cadence before starting Day 12.
+
+**Loose ends / reminders:**
+- The Kaggle API token pasted into an earlier chat message should still be rotated
+  -- flagged again, still not confirmed done.
+- Postgres append-only role enforcement (Section 10.7) still not implemented.
+- Phase 2's one open gate clause (a real HITL approve cycle through the
+  kind-deployed gateway specifically) is still open -- OFAC's own server isn't
+  wired into `dev/mcp-servers/`/kind yet either; both are natural to close once
+  Phase 3's servers are being deployed in-cluster for the full AML demo (Day 15).
+
+---
+
 ## 2026-07-27 (cont'd) — Phase 2 Day 10: README quickstart, adversarial skeleton, real OpenTelemetry trace
 
 **What happened:**
