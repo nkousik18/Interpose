@@ -3,12 +3,22 @@ transport instead of stdio -- this is the transport Interpose's gateway proxies 
 concepts/09-mcp-handshake-and-transports.md). Used as the trivial upstream server for
 testing the gateway's naive-forward path (docs/ROADMAP.md Phase 1, Day 1) and, via
 `dangerous_tool`, `throttled_tool`, and `hitl_tool`/`hitl_timeout_tool`, the policy
-stage (Phase 1 Days 3/5, Phase 2 Day 6 -- see config/policies/).
+stage (Phase 1 Days 3/5, Phase 2 Day 6 -- see config/policies/). Also deployed
+in-cluster (dev/mcp-servers/hello-echo.yaml) for a real end-to-end MCP call through
+the kind-deployed gateway (Phase 2 Day 10).
 """
+
+import os
 
 from mcp.server.fastmcp import FastMCP
 
-mcp = FastMCP("hello-echo-http", host="127.0.0.1", port=9001)
+# 127.0.0.1 is correct for a bare `uv run python server.py` on a developer's host and
+# for the subprocess fixture in tests/integration/conftest.py (both same-host callers).
+# It's never correct in a container -- nothing outside the container's network
+# namespace, a Kubernetes Service included, can reach loopback. Same fix as the
+# gateway's own GATEWAY_HOST (see Dockerfile); dev/mcp-servers/hello-echo.yaml sets
+# this env var, so the local/subprocess default is untouched.
+mcp = FastMCP("hello-echo-http", host=os.environ.get("MCP_ECHO_HOST", "127.0.0.1"), port=9001)
 
 
 @mcp.tool()
