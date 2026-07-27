@@ -58,6 +58,7 @@ from interpose.control_plane.runner import run_forever
 from interpose.control_plane.state import Decision as CPDecision
 from interpose.control_plane.state import DecisionEvent, PolicyResult
 from interpose.gateway.routing import RoutingTable, load_routing_table
+from interpose.observability.tracing import get_tracer, instrument_sqlalchemy_engine, setup_tracing
 from interpose.policies.loader import load_policy_pack
 from interpose.policies.policyset import Outcome, PolicyDecision, PolicyEngine, RateLimiter
 from interpose.session import hitl
@@ -94,6 +95,8 @@ def create_app(
     redis_url: str | None = None,
 ) -> FastAPI:
     settings = get_settings()
+    otel_endpoint = settings.otel_exporter_endpoint
+    tracer_provider = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -115,6 +118,9 @@ def create_app(
             run_forever(app.state.event_bus, control_plane_graph)
         )
 
+        if otel_endpoint:
+            instrument_sqlalchemy_engine(engine)
+
         logger.info("gateway.started routes=%s", list(app.state.routing.servers.keys()))
         try:
             yield
@@ -125,8 +131,15 @@ def create_app(
             await app.state.http_client.aclose()
             await app.state.redis.aclose()
             await engine.dispose()
+            if tracer_provider is not None:
+                tracer_provider.shutdown()
 
     app = FastAPI(title="Interpose gateway", lifespan=lifespan)
+    if otel_endpoint:
+        # Must happen here -- immediately after app creation, before the lifespan
+        # (which runs as part of the app's first ASGI call) -- not inside the
+        # lifespan itself. See tracing.setup_tracing's docstring for why.
+        tracer_provider = setup_tracing(app, otel_endpoint)
 
     @app.get("/healthz")
     async def healthz() -> Response:
@@ -282,9 +295,13 @@ async def _handle_tool_call(
     audit_store: AuditStore = request.app.state.audit_store
     client: httpx.AsyncClient = request.app.state.http_client
 
-    decision, policies_fired = _compile_and_evaluate(
-        policy_engine, rate_limiter, server_name, tool_name, agent_id, request_id
-    )
+    with get_tracer().start_as_current_span("policy.evaluate") as span:
+        span.set_attribute("interpose.server", server_name)
+        span.set_attribute("interpose.tool", tool_name)
+        decision, policies_fired = _compile_and_evaluate(
+            policy_engine, rate_limiter, server_name, tool_name, agent_id, request_id
+        )
+        span.set_attribute("interpose.decision", decision.outcome.name)
     trace_id = uuid.uuid4()
     args_hash = hashlib.sha256(canonical_json(arguments).encode("utf-8")).hexdigest()
     subject = agent_id or "anonymous"

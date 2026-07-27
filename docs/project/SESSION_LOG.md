@@ -10,6 +10,112 @@ Newest entry first. One entry per work session (not necessarily per calendar day
 
 ---
 
+## 2026-07-27 (cont'd) — Phase 2 Day 10: README quickstart, adversarial skeleton, real OpenTelemetry trace
+
+**What happened:**
+- Merged the echo-in-cluster work from earlier this session as PR #7 (squash-merged
+  after CI -- `lint`/`helm`/`test` -- all passed), then continued straight into Day
+  10's remaining scope.
+- **README quickstart**: added a `## Quickstart` section to the root `README.md` with
+  both real paths -- bare `uv run` (docker-compose Postgres/Redis, `alembic upgrade
+  head`, gateway + echo server as background processes, `interpose verify-audit`/
+  `review list`) and the kind path (`scripts/dev-up.sh`/`dev-down.sh`). Ran the bare
+  path command-by-command before committing it, not just written from memory.
+- **Adversarial test suite skeleton** (`tests/adversarial/`, Section 10.5/G9):
+  `schema.py` (Pydantic `AdversarialScenario`/`ToolCallStep`/`ExpectedOutcome`, the
+  latter validated against the real `interpose.audit.models.STATUSES` tuple rather
+  than a duplicated literal), `attack_classes.py` (a registry of the 6 required attack
+  classes, each tagged with its defense mechanism and, distinctly, whether what's
+  missing is "just a scripted fixture" -- for the 4 classes whose enforcement already
+  exists -- or a real gateway capability, for the 2 that don't: a response-side policy
+  hook, and a real `pii_redaction` beyond its current `NotImplementedError` stub),
+  `generate.py` (JSONL read/write machinery; `generate()` itself raises
+  `NotImplementedError` naming the gap, for every class, on purpose). 9 new tests
+  assert this "skeleton, zero real scenarios" state directly rather than leaving it
+  as a comment -- including one confirming the registry covers exactly the 6 G9
+  classes, so silently adding/renaming one without updating the registry would fail
+  CI.
+- **First real distributed trace** (Section 11.8, gate S3 -- "render a trace of a
+  single tool call end-to-end"). Added `opentelemetry-sdk` +
+  otlp-grpc/fastapi/httpx/sqlalchemy instrumentation packages, a
+  `otel_exporter_endpoint` setting (`None` default, same opt-in shape as
+  `groq_api_key`), and `interpose.observability.tracing`: auto-instrumentation gets
+  three real spans for free (FastAPI root span per request, httpx child span for the
+  forward call to the upstream MCP server, SQLAlchemy child spans for the audit
+  writes), plus one hand-written span around policy evaluation (`_compile_and_evaluate`
+  in `app.py`) since that's pure in-process logic nothing auto-instruments. Jaeger
+  (`jaegertracing/all-in-one:1.60` -- `:1.65` doesn't exist, verified via `docker
+  manifest inspect` before settling on a real tag) added to `docker-compose.yaml` as
+  the local OTLP receiver + UI, opt-in only, not wired into the Helm chart yet (named
+  gap, `charts/interpose/README.md` updated).
+- **Real bug found and fixed via live verification, not by inspection.** First live
+  check (gateway + echo server + Jaeger up, one real `echo` call, then queried
+  Jaeger's HTTP API directly) showed spans landing but every single one as its own
+  disconnected one-span trace -- nothing nested under a request root. Root cause:
+  `FastAPIInstrumentor.instrument_app()` works by monkeypatching
+  `Starlette.build_middleware_stack`, which Starlette only calls once and caches the
+  result of, on the app's very first ASGI event -- and the gateway's lifespan startup
+  *is* that first event. Calling `instrument_app()` from inside the lifespan (as
+  first written) patches the method after the cache already holds the unpatched
+  middleware stack, so the patch never takes effect. Fix: split `tracing.py` into
+  `setup_tracing()` (must run immediately after `FastAPI(...)` is constructed, before
+  the lifespan) and `instrument_sqlalchemy_engine()` (runs inside the lifespan once
+  the engine exists -- no such ordering constraint). Re-verified after the fix: one
+  16-span trace for the `echo` call (root HTTP span -> `policy.evaluate` -> audit
+  writes -> httpx forward -> more audit writes, all correctly parented) and a 9-span
+  trace for `dangerous_tool` that correctly stops after the DENY decision with no
+  upstream-forward span at all -- both confirmed by querying Jaeger's `/api/traces`
+  directly, not by trusting the UI would show something.
+- Updated `charts/interpose/README.md`'s named-gaps table (OTel collector/Jaeger
+  in-cluster is now its own explicit row, and the Prometheus row's wording no longer
+  implies tracing is unbuilt), added `concepts/27-opentelemetry-and-distributed-
+  tracing.md` (spans/traces/OTLP, why auto-instrumentation, and an explicit callout
+  that this is unrelated to `audit_entries`' own `trace_id`/`span_id` UUID columns --
+  same words, two unrelated systems, worth keeping straight).
+- Full suite: 168 tests green (159 + 9 new adversarial-skeleton tests), `ruff check .`
+  clean throughout.
+
+**Decisions made:**
+- Dev-fixture MCP servers and the OTel/Jaeger trace backend both stay opt-in /
+  outside the Helm chart for now -- same reasoning each time: nothing in-cluster
+  exercises them yet, and wiring them in speculatively would mean untested chart
+  surface area, not a stronger deploy.
+- The adversarial suite's `generate()` raises `NotImplementedError` uniformly today,
+  even for the 4 attack classes whose enforcement already exists -- writing templates
+  ahead of a harness that actually runs them through a live gateway would be untested
+  prose regardless of whether the policy engine is ready.
+
+**Current state:**
+- **Phase 2 Day 10 is done.** All four planned items landed: CI-green confirmation,
+  README quickstart, adversarial fixture-generator skeleton, first real Jaeger trace.
+  Phase 2's overall gate is substantially met (see `docs/ROADMAP.md`'s new status
+  note) with one clause left deliberately open: a HITL hold-and-approve cycle hasn't
+  been driven through the kind-deployed gateway specifically yet (only via
+  docker-compose, Day 6) -- a natural fit for early Phase 3 rather than a Day 10 gap.
+
+**Next steps:**
+1. Commit/push/PR/merge this session's second chunk of work.
+2. Start Phase 3 (AML Pack): OFAC sanctions MCP server, transaction-graph MCP server
+   (DuckDB over the subsampled AML data), the LangGraph investigation agent, the real
+   7-policy AML pack, the Spark telemetry/aggregation job. `dev/mcp-servers/` gets its
+   first non-toy entries here.
+2. Optionally, early in Phase 3: drive one real HITL approve cycle through the
+   kind-deployed gateway (`hello-echo-hitl.yaml`'s `hitl_tool` is already deployed) to
+   close Phase 2's one open gate clause, before or alongside standing up the real AML
+   servers.
+
+**Loose ends / reminders:**
+- The Kaggle API token pasted into an earlier chat message should still be rotated
+  (Settings → API → regenerate) -- flagged again, still not confirmed done.
+- Postgres append-only role enforcement (Section 10.7) still not implemented -- same
+  gap noted since Day 4.
+- No automated kind-based deploy test in CI yet -- still a named Phase 4 gap.
+- No OTel Collector/Jaeger in the Helm chart yet -- traces only work for bare/
+  docker-compose dev today; a kind deployment has `otel_exporter_endpoint` unset and
+  traces nothing.
+
+---
+
 ## 2026-07-27 — Phase 2 Day 10 (partial): echo server deployed in-cluster, real end-to-end kind test
 
 **What happened:**

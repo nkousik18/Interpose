@@ -32,5 +32,21 @@ services:
       timeout: 3s
       retries: 20
 
+  # Trace backend for local dev (Phase 2 Day 10, Section 11.8/S3). All-in-one image:
+  # OTLP receiver + storage + query UI in one container -- fine for a laptop, not what
+  # production runs (a real deployment splits collector/storage/query and usually
+  # points at an existing backend the buyer already has, per Section 11.8's "in
+  # production, users bring their own backend" note). Only receives traces if the
+  # gateway sets OTEL_EXPORTER_ENDPOINT (see .env.example) -- nothing exports here by
+  # default. Not deployed into the kind chart yet -- see charts/interpose/README.md's
+  # named-gaps table and concepts/27-opentelemetry-and-distributed-tracing.md.
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686" # UI
+      - "4317:4317"   # OTLP gRPC receiver
+
 volumes:
   interpose_postgres_data:

@@ -33,6 +33,16 @@ class Settings(BaseSettings):
     # config/upstreams.yaml and config/policies/ at inside the container.
     config_path: str = "config/upstreams.yaml"
     policy_dir: str = "config/policies"
+    # OpenTelemetry (Section 11.8, gate S3). None (default) means tracing setup is
+    # skipped entirely -- same "off unless configured" pattern as groq_api_key, so a
+    # kind deployment with no collector reachable doesn't spend a lifespan step and a
+    # background export thread on nothing. Deliberately not named
+    # OTEL_EXPORTER_OTLP_ENDPOINT (the OTel SDK's own auto-config env var): this
+    # project wires the SDK manually in interpose.observability.tracing rather than
+    # via the SDK's env-based auto-instrumentation, so there's no reason to share its
+    # env var name. Set to "http://localhost:4317" for local dev -- docker-compose.yaml
+    # runs Jaeger's OTLP gRPC receiver there -- via .env, not this default.
+    otel_exporter_endpoint: str | None = None
 
 
 @lru_cache
