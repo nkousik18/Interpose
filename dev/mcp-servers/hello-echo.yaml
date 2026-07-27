@@ -1,0 +1,66 @@
+# Trivial upstream MCP server, deployed via plain `kubectl apply -f dev/mcp-servers/`
+# (docs/INTERPOSE_SCOPING.md Section 11.3, step 5) -- deliberately NOT part of
+# charts/interpose/. That chart charts the actual product (gateway + control plane +
+# its own dependencies); this is a dev/demo fixture that exists only so the
+# kind-deployed gateway has something real to route a Stage 3 upstream call to. Phase
+# 3's real AML MCP servers (OFAC, transaction-graph) will very likely follow this same
+# pattern -- external MCP servers the gateway proxies to, not something the chart owns.
+#
+# Image: built + `kind load docker-image`'d by scripts/dev-up.sh from
+# examples/hello-mcp-http-echo/Dockerfile. Namespace must already exist
+# (scripts/dev-up.sh creates it before applying this).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-echo
+  namespace: interpose-system
+  labels:
+    app.kubernetes.io/name: hello-echo
+    app.kubernetes.io/component: dev-mcp-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hello-echo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hello-echo
+        app.kubernetes.io/component: dev-mcp-server
+    spec:
+      containers:
+        - name: hello-echo
+          image: hello-echo:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: mcp
+              containerPort: 9001
+          readinessProbe:
+            tcpSocket:
+              port: 9001
+            initialDelaySeconds: 1
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-echo
+  namespace: interpose-system
+  labels:
+    app.kubernetes.io/name: hello-echo
+    app.kubernetes.io/component: dev-mcp-server
+spec:
+  selector:
+    app.kubernetes.io/name: hello-echo
+    app.kubernetes.io/component: dev-mcp-server
+  ports:
+    - name: mcp
+      port: 9001
+      targetPort: 9001

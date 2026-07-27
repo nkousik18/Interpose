@@ -133,6 +133,36 @@ since Day 2 (the in-memory `RateLimiter` before Redis existed) and Day 6 (the de
 missing explicitly, and let each gap get closed exactly when the thing that needs it
 arrives.
 
+## Phase 2 Day 10: a real upstream, and why it isn't part of the chart
+
+Day 9 got the stack itself running in kind; nothing was calling through it yet — the
+routing ConfigMap (`upstreams.yaml`) was empty, so every `/mcp/{name}` request 404'd.
+Day 10 deploys `examples/hello-mcp-http-echo` — the same trivial echo server the
+integration tests already run as a subprocess — as a real in-cluster pod, so there's
+something genuine on the other end of a gateway call, not just `/healthz`.
+
+**Why `dev/mcp-servers/hello-echo.yaml`, not a chart template.** The chart's job is to
+deploy *the product* — Interpose's own Deployment/Service/ConfigMaps and the
+infrastructure it needs (Postgres, Redis, Grafana). The echo server isn't part of
+Interpose; it's a stand-in for what Phase 3's real OFAC/transaction-graph MCP servers
+will eventually be — an *external* system the gateway proxies to. Templating it into
+`charts/interpose/` would blur that line and give the chart a workload to maintain
+that has nothing to do with what the chart is actually for. So it's a plain
+Deployment + Service, applied directly with `kubectl apply -f dev/mcp-servers/`
+(scoping doc Section 11.3, step 5), the same way a real external MCP server would just
+already exist somewhere the gateway can reach — the chart only needs to know its URL.
+
+**How the gateway finds it: Kubernetes Service DNS.** Every Service gets a
+cluster-internal DNS name for free, resolved by the cluster's built-in DNS (CoreDNS):
+`<service-name>.<namespace>.svc.cluster.local`. That's what
+`charts/interpose/values-dev.yaml` puts in `upstreams.servers.hello-echo.url` —
+`http://hello-echo.interpose-system.svc.cluster.local:9001/mcp` — instead of a pod IP
+(pods are ephemeral; their IPs change on every restart) or `127.0.0.1` (only correct
+for same-host processes, which is why the server itself needs `MCP_ECHO_HOST=0.0.0.0`
+in-container — same fix as the gateway's own `GATEWAY_HOST` from Day 9). The Service
+is the stable name; DNS is how anything else in the cluster — the gateway included —
+finds it without caring which pod or IP is currently behind it.
+
 ## Related
 
 - [[07-what-is-kubernetes]]

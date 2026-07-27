@@ -11,7 +11,10 @@ Normally done via `scripts/dev-up.sh`, not by hand:
 ```sh
 kind create cluster --config kind.yaml
 docker build -t interpose:dev .
-kind load docker-image interpose:dev
+docker build -t hello-echo:dev examples/hello-mcp-http-echo
+kind load docker-image interpose:dev hello-echo:dev
+kubectl create namespace interpose-system
+kubectl apply -f dev/mcp-servers/     # dev fixture MCP server, see dev/mcp-servers/README.md
 helm install interpose ./charts/interpose -f charts/interpose/values-dev.yaml \
   --set llm.groqApiKey="$GROQ_API_KEY"   # optional -- see values-dev.yaml
 ```
@@ -33,6 +36,14 @@ helm install interpose ./charts/interpose -f charts/interpose/values-dev.yaml \
   (`config/policies/*.yaml`), and a Secret for `DATABASE_URL`/`REDIS_URL`/
   `GROQ_API_KEY` (dev: chart-created via `secrets.createDev`; prod: externally
   managed, referenced via `secrets.existingSecretName`).
+
+**Not deployed by this chart, but wired into it in dev:** `values-dev.yaml` points
+`upstreams.servers.hello-echo` at a real in-cluster MCP server -- the
+`examples/hello-mcp-http-echo` fixture, applied via plain `kubectl apply -f
+dev/mcp-servers/` (see `dev/mcp-servers/README.md`), not templated into this chart.
+That's what makes `/mcp/hello-echo` a genuine end-to-end call through the
+kind-deployed gateway rather than a 404, without the chart owning a workload that
+isn't part of the actual product.
 
 ## Named gaps (deliberately not built yet)
 

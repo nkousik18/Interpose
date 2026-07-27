@@ -183,6 +183,26 @@ chart + `scripts/dev-up.sh`, first distributed trace visible in Jaeger.
       and all four dashboards visible via Grafana's API. `helm lint`/`helm template`
       added to CI. 159 total tests green (2 new `/healthz`/`/readyz` integration
       tests).
+- [x] Day 10 (partial) — Deployed `examples/hello-mcp-http-echo` in-cluster as a real
+      upstream (`dev/mcp-servers/hello-echo.yaml`, plain `kubectl apply`, deliberately
+      not a chart template -- the chart owns the product, not a stand-in for a future
+      external MCP server; see concept 26's new section). `server.py` now reads
+      `MCP_ECHO_HOST` (default `127.0.0.1`, same fix pattern as the gateway's
+      `GATEWAY_HOST`); its own small `Dockerfile` builds `hello-echo:dev`, kept
+      separate from the main `interpose:dev` image since the fixture needs none of the
+      gateway's dependencies. `scripts/dev-up.sh` builds/loads both images and applies
+      `dev/mcp-servers/` before the Helm install; `values-dev.yaml` routes
+      `/mcp/hello-echo` to the Service's cluster DNS name
+      (`hello-echo.interpose-system.svc.cluster.local:9001`). **Live-verified against a
+      real kind cluster**: a genuine MCP client (`initialize`/`list_tools`/`call_tool`)
+      through the deployed gateway got a real `echo` result back, and the same denylist
+      policy that already worked in docker-compose blocked `dangerous_tool` for real
+      against the kind deployment -- confirmed in the actual in-cluster Postgres via
+      `psql` (INTENT/COMPLETED rows for `echo`, one DENIED row for `dangerous_tool`,
+      correct `policies_fired`). Full up/down cycle clean (149s up, no residual state
+      on teardown). 159 tests still green, `ruff`/`helm lint`/`helm template` all clean.
+      Remaining Day 10 items (CI-green confirmation, README quickstart, Jaeger trace,
+      adversarial fixture skeleton) still open.
 
 **Gate:** full stack deploys to `kind` via Helm; a HITL cycle completes end-to-end with a
 manual approval; hash chain verifies; control-plane agents produce enriched decision events.

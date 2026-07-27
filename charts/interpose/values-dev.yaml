@@ -13,6 +13,17 @@
 secrets:
   createDev: true
 
+# Routes /mcp/hello-echo at the gateway to the dev fixture MCP server
+# (dev/mcp-servers/hello-echo.yaml), applied separately by scripts/dev-up.sh -- not
+# part of this chart, see dev/mcp-servers/README.md. Cross-namespace-safe Service DNS
+# name (<service>.<namespace>.svc.cluster.local) rather than the short "hello-echo"
+# name, since a values file shouldn't assume it's installed into the same namespace
+# the fixture happens to use today.
+upstreams:
+  servers:
+    hello-echo:
+      url: "http://hello-echo.interpose-system.svc.cluster.local:9001/mcp"
+
 grafana:
   # Local-only convenience default -- fine because Grafana here is only reachable via
   # `kubectl port-forward`, never exposed. Do not reuse this value.yaml as a starting

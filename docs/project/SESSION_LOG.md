@@ -10,6 +10,91 @@ Newest entry first. One entry per work session (not necessarily per calendar day
 
 ---
 
+## 2026-07-27 — Phase 2 Day 10 (partial): echo server deployed in-cluster, real end-to-end kind test
+
+**What happened:**
+- Resolved the open question from Day 9's next-steps: deployed
+  `examples/hello-mcp-http-echo` inside the kind cluster as a real upstream, rather
+  than leaving that gap open until Phase 3's real AML MCP servers arrive.
+- Deliberate scoping call: the echo server is a plain `kubectl apply -f
+  dev/mcp-servers/` fixture (`dev/mcp-servers/hello-echo.yaml`, new directory), not a
+  `charts/interpose/` template. The chart's job is the actual product (gateway +
+  control plane + its infra); the echo server stands in for a future *external* MCP
+  server, which is exactly how Phase 3's real servers will relate to the gateway too
+  -- something the chart routes to, not something it owns.
+- `server.py` now reads host from `MCP_ECHO_HOST` (default unchanged at `127.0.0.1`,
+  so the existing subprocess-based integration tests and bare `uv run` usage are
+  untouched) -- same fix shape as the gateway's own `GATEWAY_HOST` from Day 9,
+  needed because nothing outside a container's network namespace can reach
+  `127.0.0.1`.
+- Added `examples/hello-mcp-http-echo/Dockerfile`: a small standalone image (just
+  `mcp[cli]`, non-root), deliberately not folded into the main `interpose:dev` image
+  -- the fixture needs none of the gateway's dependencies (Postgres, Redis,
+  LangGraph, ...), so bundling it in would ship unrelated weight for something that
+  isn't the app under test.
+- `scripts/dev-up.sh`: builds and `kind load docker-image`s both `interpose:dev` and
+  the new `hello-echo:dev`, applies `dev/mcp-servers/` right after namespace creation
+  (before the Helm install), and waits on the fixture's Deployment condition before
+  printing pod status.
+- `charts/interpose/values-dev.yaml` now sets
+  `upstreams.servers.hello-echo.url` to the in-cluster Service's cluster-DNS name
+  (`hello-echo.interpose-system.svc.cluster.local:9001`) -- `values.yaml`'s own
+  commented-out example from Day 9 is what this replaces, now that it's real instead
+  of speculative.
+- Updated the now-stale "no MCP server deployed in-cluster" comments in
+  `values.yaml`/`configmap-upstreams.yaml`, `charts/interpose/README.md`'s install
+  snippet and deploy-list, `examples/hello-mcp-http-echo/README.md`, and added a new
+  section to `concepts/26-helm-and-the-interpose-chart.md` covering the chart-vs-
+  fixture boundary and Kubernetes Service DNS (`<service>.<namespace>.svc.cluster.local`)
+  as the reason a Service name, not a pod IP, is what gets configured.
+- **Live-verified against a real kind cluster** (`scripts/dev-up.sh`, 149s up):
+  a genuine MCP client (not curl -- streamable-HTTP needs a real
+  `initialize`/`list_tools`/`call_tool` handshake) run through the deployed gateway
+  at `http://127.0.0.1:8000/mcp/hello-echo` got a real `echo` tool result back, and
+  `dangerous_tool` was denylisted for real by the same policy that already worked in
+  docker-compose. Confirmed via `kubectl exec ... psql` against the actual in-cluster
+  Postgres: an INTENT/COMPLETED pair for `echo`, one DENIED row for `dangerous_tool`
+  with the correct `policies_fired`, in the real hash-chained table -- not a stub.
+  `scripts/dev-down.sh` left no residual state, as before.
+- Full local integration suite (26 tests) re-run before touching kind, to confirm the
+  `server.py` host-override change didn't regress the existing docker-compose/
+  subprocess path; 159 total tests green afterward, `ruff check .` clean,
+  `helm lint`/`helm template` both clean.
+
+**Decisions made:**
+- Dev-fixture MCP servers live in `dev/mcp-servers/` as plain manifests, never as
+  chart templates -- matches how a real external MCP server (Phase 3's OFAC /
+  transaction-graph servers) will actually relate to the gateway.
+- Each fixture gets its own minimal Dockerfile/image rather than reusing or extending
+  the main `interpose:dev` image, to keep "what the product depends on" and "what a
+  test fixture depends on" from blurring together.
+
+**Current state:**
+- Phase 2 Day 10 is partially done -- the echo-server decision from Day 9 is resolved
+  and live-verified, but Day 10's other original scope (confirm CI-green for Week 1+2
+  integration tests, README quickstart draft, first Jaeger trace, adversarial
+  fixture-generator skeleton) is still open.
+
+**Next steps:**
+1. Finish Day 10: confirm the full suite is green in CI (not just locally), draft the
+   README quickstart, get a first distributed trace visible in Jaeger, and build the
+   adversarial test suite skeleton (fixture generator only, no attacks yet).
+2. Commit/push/PR/merge this session's work per the established per-day cadence.
+3. After Day 10's gate closes, Phase 3 (AML Pack) starts: OFAC sanctions MCP server,
+   transaction-graph MCP server, the LangGraph investigation agent, the real 7-policy
+   AML pack, and the Spark telemetry job -- at which point `dev/mcp-servers/` gets a
+   second, non-toy entry.
+
+**Loose ends / reminders:**
+- The Kaggle API token pasted into an earlier chat message should still be rotated
+  (Settings → API → regenerate) -- flagged again, still not confirmed done.
+- Postgres append-only role enforcement (Section 10.7) still not implemented -- same
+  gap noted since Day 4.
+- No automated kind-based deploy test in CI yet (only `helm lint`/`helm template`) --
+  still a named Phase 4 gap, not required for Day 10.
+
+---
+
 ## 2026-07-24 — Phase 2 Day 9: Helm chart, first real kind deployment
 
 **What happened:**

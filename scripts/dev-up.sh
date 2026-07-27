@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Brings up the full Interpose stack on a local kind cluster: cluster -> image ->
-# Helm release -> port-forwards. Phase 2 Day 9 (docs/ROADMAP.md); see
-# charts/interpose/README.md for what the chart actually deploys, and
+# Brings up the full Interpose stack on a local kind cluster: cluster -> images ->
+# dev/mcp-servers/ fixtures -> Helm release -> port-forwards. Phase 2 Day 9
+# (docs/ROADMAP.md); see charts/interpose/README.md for what the chart actually
+# deploys, dev/mcp-servers/README.md for the fixture MCP server(s) it doesn't, and
 # concepts/26-helm-and-the-interpose-chart.md for the concepts behind it.
 #
 # Deliberately skips two steps Section 11.3's literal script lists (cert-manager,
@@ -40,10 +41,16 @@ fi
 echo "==> building interpose:dev image"
 docker build -t interpose:dev .
 
-echo "==> loading image into kind"
-kind load docker-image interpose:dev --name "$CLUSTER_NAME"
+echo "==> building hello-echo:dev image (dev fixture MCP server)"
+docker build -t hello-echo:dev examples/hello-mcp-http-echo
+
+echo "==> loading images into kind"
+kind load docker-image interpose:dev hello-echo:dev --name "$CLUSTER_NAME"
 
 kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
+
+echo "==> applying dev/mcp-servers/ (see dev/mcp-servers/README.md -- not part of the chart)"
+kubectl apply -f dev/mcp-servers/
 
 echo "==> helm upgrade --install"
 helm_args=(upgrade --install "$RELEASE" ./charts/interpose \
@@ -57,8 +64,12 @@ else
 fi
 helm "${helm_args[@]}"
 
+echo "==> waiting for hello-echo dev fixture to be ready"
+kubectl wait --for=condition=available --timeout=60s -n "$NAMESPACE" deployment/hello-echo
+
 echo "==> pod status"
 kubectl get pods -n "$NAMESPACE" -l "app.kubernetes.io/instance=$RELEASE"
+kubectl get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=hello-echo"
 
 : > "$PIDFILE"
 echo "==> starting port-forwards (gateway :8000, grafana :3000)"

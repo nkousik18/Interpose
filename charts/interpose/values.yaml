@@ -81,15 +81,14 @@ grafana:
   adminPassword: admin
 
 # ConfigMap contents for Stage 3 routing (interpose.gateway.routing). Empty by
-# default -- no MCP server is deployed inside the cluster by this chart yet (Phase 3's
-# OFAC / transaction-graph servers, or a demo echo server, are what would populate
-# this). A gateway with no configured upstreams still starts and passes /healthz +
-# /readyz; every /mcp/{name} call just 404s as "unknown_server" until an entry exists.
+# default -- this chart doesn't deploy any MCP server itself (Phase 3's OFAC /
+# transaction-graph servers will be real upstreams eventually). A gateway with no
+# configured upstreams still starts and passes /healthz + /readyz; every /mcp/{name}
+# call just 404s as "unknown_server" until an entry exists. `values-dev.yaml`
+# populates this with the `hello-echo` dev fixture (dev/mcp-servers/,
+# scripts/dev-up.sh) so local kind installs have a real upstream to route to.
 upstreams:
   servers: {}
-  # servers:
-  #   hello-echo:
-  #     url: "http://hello-echo.interpose-system.svc.cluster.local:9001/mcp"
 
 serviceAccount:
   create: true
