@@ -201,11 +201,45 @@ chart + `scripts/dev-up.sh`, first distributed trace visible in Jaeger.
       `psql` (INTENT/COMPLETED rows for `echo`, one DENIED row for `dangerous_tool`,
       correct `policies_fired`). Full up/down cycle clean (149s up, no residual state
       on teardown). 159 tests still green, `ruff`/`helm lint`/`helm template` all clean.
-      Remaining Day 10 items (CI-green confirmation, README quickstart, Jaeger trace,
-      adversarial fixture skeleton) still open.
+- [x] Day 10 (rest) — Confirmed the full suite green in CI itself (this PR's `test`
+      job runs `uv run pytest` -- unit + integration, real Postgres/Redis services --
+      not just locally). Drafted a root `README.md` Quickstart (bare `uv run` loop and
+      the kind path via `scripts/dev-up.sh`), manually verified both.
+      **Adversarial test suite skeleton** (`tests/adversarial/`, G9): scenario schema
+      (`schema.py`), a registry of the 6 required attack classes with each one's
+      real/missing status (`attack_classes.py`), and JSONL round-trip machinery
+      (`generate.py`) -- deliberately zero real scenarios yet, `generate()` raises
+      `NotImplementedError` naming what's missing per class (a response-side policy
+      hook; a real `pii_redaction` implementation) so the "skeleton, not attacks" state
+      is itself tested, not just prose. **First real distributed trace** (Section 11.8,
+      gate S3): `interpose.observability.tracing` wires OpenTelemetry via
+      auto-instrumentation (FastAPI root span, httpx child span for the upstream
+      forward, SQLAlchemy child spans for the audit writes) plus one manual span
+      around policy evaluation; Jaeger added to `docker-compose.yaml` (opt-in via
+      `OTEL_EXPORTER_ENDPOINT`, unset by default so a kind deployment with no collector
+      doesn't spend a background export thread on nothing -- not wired into the chart
+      yet, named gap). **Live bug found and fixed during verification**:
+      `FastAPIInstrumentor.instrument_app()` must run immediately after `FastAPI(...)`
+      is constructed, not inside the lifespan -- it works by patching
+      `Starlette.build_middleware_stack`, which Starlette calls and caches exactly
+      once, on the app's first ASGI event (lifespan startup included); calling it from
+      inside the lifespan patches the method after that cache is already populated, so
+      every span became its own disconnected trace instead of nesting under a request
+      root. Confirmed fixed by querying Jaeger's API directly after a real tool call:
+      one 16-span trace for `echo` (root HTTP span -> `policy.evaluate` -> audit
+      SQLAlchemy writes -> httpx forward to the upstream -> more audit writes, all
+      correctly parented), one 9-span trace for the denylisted `dangerous_tool` call
+      that correctly stops after the DENY decision with no upstream-forward span.
+      168 tests green (9 new adversarial-skeleton tests), `ruff` clean.
 
 **Gate:** full stack deploys to `kind` via Helm; a HITL cycle completes end-to-end with a
 manual approval; hash chain verifies; control-plane agents produce enriched decision events.
+**Status:** deploy/hash-chain/control-plane-events clauses verified (deploy via Day 9's real
+kind test; the rest via docker-compose, Days 4/7/8). The HITL-hold-and-approve clause is still
+only verified via docker-compose (Day 6) -- `hello-echo-hitl.yaml`'s `hitl_tool` is deployed
+in-cluster as of Day 10, but a real approve cycle hasn't been driven through the kind-deployed
+gateway specifically yet. Left open rather than closed by assumption; a natural fit for early
+Phase 3 once real MCP servers are being exercised in-cluster anyway.
 
 ## Phase 3 — AML Pack
 

@@ -33,5 +33,6 @@ concept was introduced.
 | 24 | [narrative-generation-with-a-real-llm.md](24-narrative-generation-with-a-real-llm.md) | Why Groq (a documented provider-swap), real structured outputs vs. prompt-and-hope JSON, two bugs only a live smoke test could catch (strict schema, reasoning-token exhaustion), why the automated suite still never calls the real API |
 | 25 | [remaining-control-plane-agents.md](25-remaining-control-plane-agents.md) | Agent A2's live (not trained) z-score and cold-start handling, Agent A4's graph-topology extension and a real severity bug the tests caught, Agent A3's "similar patterns" simplification |
 | 26 | [helm-and-the-interpose-chart.md](26-helm-and-the-interpose-chart.md) | What Helm/charts/releases are vs. raw `kubectl apply` or Kustomize, `_helpers.tpl` and Go templating, a real Service-selector bug the live kind test caught, the embedded-vs-external Postgres/Redis toggle, liveness vs. readiness vs. startup probes |
+| 27 | [opentelemetry-and-distributed-tracing.md](27-opentelemetry-and-distributed-tracing.md) | What a span/trace/OTLP are, 3 real spans from auto-instrumentation (FastAPI/httpx/SQLAlchemy) plus one manual span for policy evaluation, and why this is unrelated to the audit log's own `trace_id`/`span_id` columns |
 
 More get added as we build — each new one lands here the day it's created.
