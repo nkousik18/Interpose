@@ -34,5 +34,6 @@ concept was introduced.
 | 25 | [remaining-control-plane-agents.md](25-remaining-control-plane-agents.md) | Agent A2's live (not trained) z-score and cold-start handling, Agent A4's graph-topology extension and a real severity bug the tests caught, Agent A3's "similar patterns" simplification |
 | 26 | [helm-and-the-interpose-chart.md](26-helm-and-the-interpose-chart.md) | What Helm/charts/releases are vs. raw `kubectl apply` or Kustomize, `_helpers.tpl` and Go templating, a real Service-selector bug the live kind test caught, the embedded-vs-external Postgres/Redis toggle, liveness vs. readiness vs. startup probes |
 | 27 | [opentelemetry-and-distributed-tracing.md](27-opentelemetry-and-distributed-tracing.md) | What a span/trace/OTLP are, 3 real spans from auto-instrumentation (FastAPI/httpx/SQLAlchemy) plus one manual span for policy evaluation, and why this is unrelated to the audit log's own `trace_id`/`span_id` columns |
+| 28 | [fuzzy-matching-and-sanctions-screening.md](28-fuzzy-matching-and-sanctions-screening.md) | Why sanctions screening needs fuzzy matching, rapidfuzz basics, a real case-sensitivity bug this project's own tests caught, why check_entity/check_alias search different corpora, and FastMCP's structuredContent envelope quirk |
 
 More get added as we build — each new one lands here the day it's created.

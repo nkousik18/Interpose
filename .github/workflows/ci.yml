@@ -58,6 +58,6 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-      - run: uv sync --all-extras --dev
+      - run: uv sync --all-extras --dev --group mcp-servers
       - run: uv run alembic upgrade head
       - run: uv run pytest

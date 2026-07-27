@@ -7,6 +7,7 @@ Full rationale: `docs/INTERPOSE_SCOPING.md` Section 10.
 | Dataset | Location | Source | License | Status |
 |---|---|---|---|---|
 | OFAC SDN (sanctions) list | `~/.interpose/data/ofac-sdn/sdn.csv` | `sanctionslistservice.ofac.treas.gov`, official Treasury API | Public domain (US federal government work) | Downloaded, 19,169 entries |
+| OFAC alternate identities (aliases) | `~/.interpose/data/ofac-sdn/alt.csv` | Same Treasury API (`.../exports/alt.csv`) | Public domain (US federal government work) | Downloaded, 20,159 rows |
 | IBM Transactions for AML (HI-Medium) | `~/.interpose/data/ibm-aml-raw/` (raw) / `~/.interpose/data/ibm-aml/` (subsampled) | Kaggle (`ealtman2019/ibm-transactions-for-anti-money-laundering-aml`) | CDLA-Sharing-1.0 — see `CITATIONS.md` | Subsampled: 500,000 accounts, 3,158,483 transactions |
 
 ## Correction vs. the scoping doc
@@ -91,11 +92,41 @@ Output: Parquet, `~/.interpose/data/ibm-aml/transactions/` (partitioned by `mont
 a single `month=2022-09` partition since the whole HI-Medium split covers one month) and
 `~/.interpose/data/ibm-aml/accounts/` (entity metadata for the sampled accounts only).
 
+## OFAC file formats (Phase 3, Day 11 — corrections vs. what the scoping doc assumed)
+
+Section 9.6 describes `check_alias` as an "alias-aware search (SDN entries often list multiple
+names)" alongside `check_entity`, but only `sdn.csv` was downloaded in Phase 0 — that file has
+exactly one name per entry. The real alias data lives in a second Treasury file, `alt.csv` (the
+"Alternate Identities" export, same `sanctionslistservice.ofac.treas.gov` API,
+`.../exports/alt.csv` — case-sensitive lowercase path; the uppercase form 400s), fetched fresh
+while scoping the OFAC MCP server. Without it, `check_alias` would just be `check_entity` with
+a different name.
+
+Both files' real shape, verified against the actual downloads (not assumed from the doc):
+
+- **`sdn.csv`**: 12 comma-separated columns, **no header row**, UTF-8 (older Treasury exports —
+  and most tutorials online — are Windows-1252; this current API endpoint serves UTF-8).
+  Columns: `ent_num, name, sdn_type, program, title, call_sign, vess_type, tonnage, grt,
+  vess_flag, vess_owner, remarks`. Free-text fields contain embedded commas inside quotes, so
+  this needs a real CSV parser (Python's `csv` module), not naive `.split(",")`.
+  - `sdn_type` is blank (`"-0-"`) for 9,837 of 19,169 real rows — **that blank means "entity"**,
+    not "unknown"; only `individual` (7,471), `vessel` (1,517), and `aircraft` (344) are ever
+    spelled out explicitly. The loader maps `-0-` → `"entity"` rather than treating it as missing
+    data.
+  - `program`, when an entry has more than one sanctions program, is joined as
+    `PROGRAM1] [PROGRAM2` (no enclosing brackets around the whole field) rather than a normal
+    delimiter — split on `"] ["` and strip stray `[`/`]` per piece.
+  - `-0-` is the general null/placeholder sentinel across every column, not just `sdn_type`.
+- **`alt.csv`**: 5 columns, no header, UTF-8. `ent_num, alt_num, alt_type ("aka"), alt_name,
+  alt_remarks` — `ent_num` joins back to `sdn.csv`'s primary key, letting one SDN entry carry any
+  number of alias rows.
+
 ## Refresh notes
 
-- **OFAC**: downloaded once manually for local dev. Interpose's sanctions MCP server (built in
-  Phase 3) will fetch it fresh from the same URL on its own startup — this manual copy was just
-  to verify the source and format work before writing that server.
+- **OFAC**: downloaded once manually for local dev (both `sdn.csv` and, as of Day 11, `alt.csv`).
+  Interpose's sanctions MCP server (`mcp-servers/ofac-sanctions/`) fetches both fresh from the
+  same Treasury API on its own startup — these manual copies were just to verify the source and
+  format work before writing that server, and now double as offline fixtures for local dev.
 - **IBM AML**: subsampled once as a one-shot local job. Re-running
   `subsample_aml.py` regenerates the same output deterministically (fixed seed) unless the raw
   CSVs change.
