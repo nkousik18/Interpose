@@ -21,6 +21,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 UPSTREAM_SCRIPT = REPO_ROOT / "examples" / "hello-mcp-http-echo" / "server.py"
 OFAC_SERVER_SCRIPT = REPO_ROOT / "mcp-servers" / "ofac-sanctions" / "src" / "server.py"
 OFAC_FIXTURES = REPO_ROOT / "mcp-servers" / "ofac-sanctions" / "tests" / "fixtures"
+TRANSACTION_GRAPH_SERVER_SCRIPT = (
+    REPO_ROOT / "mcp-servers" / "transaction-graph" / "src" / "server.py"
+)
+TRANSACTION_GRAPH_FIXTURES = REPO_ROOT / "mcp-servers" / "transaction-graph" / "tests" / "fixtures"
 
 
 def _wait_for_port(host: str, port: int, timeout: float = 10.0) -> None:
@@ -68,6 +72,41 @@ def ofac_upstream_and_gateway():
     gateway = subprocess.Popen([sys.executable, "-m", "interpose.gateway"], cwd=REPO_ROOT)
     try:
         _wait_for_port("127.0.0.1", 9002)
+        _wait_for_port("127.0.0.1", 8000)
+        yield
+    finally:
+        for proc in (gateway, upstream):
+            proc.terminate()
+        for proc in (gateway, upstream):
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+
+
+@pytest.fixture(scope="module")
+def transaction_graph_upstream_and_gateway():
+    """Same shape as `ofac_upstream_and_gateway`, but with the transaction-graph
+    server instead -- pointed at small local fixture CSVs
+    (TRANSACTION_GRAPH_TRANSACTIONS_SOURCE/_ACCOUNTS_SOURCE) rather than the real
+    ~150MB subsampled dataset, so this test suite never depends on that local data
+    existing on the machine running the tests."""
+    tg_env = {
+        **os.environ,
+        "TRANSACTION_GRAPH_TRANSACTIONS_SOURCE": str(
+            TRANSACTION_GRAPH_FIXTURES / "transactions_sample.csv"
+        ),
+        "TRANSACTION_GRAPH_ACCOUNTS_SOURCE": str(
+            TRANSACTION_GRAPH_FIXTURES / "accounts_sample.csv"
+        ),
+    }
+    upstream = subprocess.Popen(
+        [sys.executable, str(TRANSACTION_GRAPH_SERVER_SCRIPT)], env=tg_env
+    )
+    gateway = subprocess.Popen([sys.executable, "-m", "interpose.gateway"], cwd=REPO_ROOT)
+    try:
+        _wait_for_port("127.0.0.1", 9003)
         _wait_for_port("127.0.0.1", 8000)
         yield
     finally:

@@ -6,3 +6,5 @@ servers:
     url: "http://127.0.0.1:9001/mcp"
   ofac-sanctions:
     url: "http://127.0.0.1:9002/mcp"
+  transaction-graph:
+    url: "http://127.0.0.1:9003/mcp"
