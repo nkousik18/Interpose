@@ -6,7 +6,15 @@
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 WORKDIR /app
-RUN uv pip install --system --no-cache "mcp[cli]>=1.28.1" "rapidfuzz>=3.10" \
+# mcp is pinned exactly (matching the root project's uv.lock), not left as a
+# lower-bound ">=" -- this standalone Dockerfile has no lockfile of its own, so an
+# unpinned install silently drifts to whatever's newest on PyPI at build time. Found
+# for real while building transaction-graph's Dockerfile (Phase 3 Day 12): a fresh
+# build on 2026-07-28 resolved mcp[cli]==2.0.0, a breaking upstream major version that
+# renamed/removed `mcp.server.fastmcp` -- this image would fail identically on a
+# rebuild today even though it worked at Day 11. See
+# concepts/29-embedded-analytics-with-duckdb.md.
+RUN uv pip install --system --no-cache "mcp[cli]==1.28.1" "rapidfuzz>=3.10" \
     "pydantic-settings>=2.5" "httpx>=0.28"
 
 RUN groupadd --gid 10001 ofac && \

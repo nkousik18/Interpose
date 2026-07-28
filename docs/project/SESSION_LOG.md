@@ -10,6 +10,110 @@ Newest entry first. One entry per work session (not necessarily per calendar day
 
 ---
 
+## 2026-07-28 — Phase 3 Day 12: transaction-graph MCP server, a VARCHAR bug and an unpinned-dependency bug
+
+**What happened:**
+- Built `mcp-servers/transaction-graph/`, the second AML MCP server (Section 9.6),
+  following the same standalone-service pattern Day 11 established for
+  `ofac-sanctions`: its own `Dockerfile`, own tiny `Settings`, no dependency on
+  `src/interpose/`. Six tools: `query_transactions`, `get_account` (live summary
+  stats, computed on every call since the dataset itself has none), `neighbors`
+  (breadth-first k-hop counterparty walk), `subgraph` (the induced subgraph over a
+  requested account set), `structuring_check` (a canned structuring/"smurfing"
+  heuristic), and `mark_investigated` (the one write tool).
+- Data source is the Spark-subsampled IBM AML Parquet from Phase 0
+  (`data/README.md`) — loaded as two DuckDB *views* (`read_parquet(...)`, filters
+  pushed down into the scan, no separate "load" step) plus one real, in-memory,
+  per-restart-ephemeral table (`investigated`) for the write path. New concept file,
+  `concepts/29-embedded-analytics-with-duckdb.md`: embedded-vs-server database
+  tradeoffs (DuckDB vs. Postgres), reading Parquet without loading it, the
+  single-writer lock around the one write path, and the design reasoning behind
+  `neighbors`' BFS-over-recursive-CTE choice, `subgraph`'s induced-subgraph
+  semantics, and `structuring_check`'s window anchored to the account's own last
+  activity rather than wall-clock (this is 2022 data).
+- `store.py`'s query functions take a plain `GraphStore` + arguments, fully decoupled
+  from FastMCP/`Context` — all 16 new unit tests
+  (`tests/unit/mcp_servers/test_transaction_graph_store.py`) run against a tiny
+  in-memory fixture table (a synthetic 2-hop chain plus a seeded structuring
+  pattern), no files, no server process. 7 new integration tests
+  (`tests/integration/test_gateway_transaction_graph.py`) drive real tool calls
+  through the actual live gateway, via a new `transaction_graph_upstream_and_gateway`
+  fixture pointed at small local CSV fixtures
+  (`mcp-servers/transaction-graph/tests/fixtures/`, synthetic data — this dataset's
+  CDLA-Sharing-1.0 license is share-alike, so fixtures here are synthetic rather than
+  small real extracts the way OFAC's public-domain fixtures could be). Added
+  `duckdb` to the `mcp-servers` uv dependency group; `config/upstreams.yaml` gained a
+  `transaction-graph` route (port 9003).
+- **Two real bugs found via this project's own testing, not assumed:**
+  1. DuckDB's `read_csv_auto` (used only by the small test-fixture CSVs) infers
+     numeric-looking ID columns like `bank_id: "1"` as INTEGER — but the real Parquet
+     data is always string-typed (Spark's `.csv(header=True)` read has no schema
+     inference, so `bank_id` etc. stay strings). `AccountRecord`'s `bank_id: str`
+     Pydantic validation caught the mismatch immediately (`get_account` failed with a
+     validation error) the first time the server actually ran against the fixture.
+     Fixed by explicitly `CAST`ing every ID-shaped column to VARCHAR in both view
+     definitions, regardless of source — a defensive fix that also protects the real
+     Parquet path, not just the fixture.
+  2. Building the Docker image failed outright:
+     `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`. The Dockerfile
+     installs `mcp[cli]>=1.28.1` — a lower bound only, no lockfile (standalone
+     service Dockerfiles deliberately don't share the root project's `uv.lock`).
+     Between Day 11 (when `ofac-sanctions`' identical pattern last built clean) and
+     today, upstream shipped a breaking `mcp==2.0.0` that renamed/removed
+     `mcp.server.fastmcp`. Fixed by pinning the exact version the root project's
+     `uv.lock` already resolved (`mcp[cli]==1.28.1`) in *both* this Dockerfile and
+     `ofac-sanctions/Dockerfile` — the latter had the identical latent bug, silently
+     armed and unnoticed until a fresh rebuild.
+- **Live-verified twice**: once via `uv run pytest` (208 total tests green, `ruff`
+  clean) against the real gateway with fixture data; once as a genuine Docker
+  container, built from the fixed Dockerfile and run with the real ~150MB subsampled
+  dataset bind-mounted in (`docker run -v ~/.interpose/data/ibm-aml:/data/ibm-aml:ro
+  ...`) — startup log confirmed `transactions=3158483 accounts=500000`, matching
+  `subsample_report.json` exactly, and a real `get_account`/`neighbors`/
+  `structuring_check` call against a genuine high-volume account (`70:100428660`,
+  294K transactions) returned correct, real results.
+
+**Decisions made:**
+- DuckDB reads Parquet/CSV directly as views rather than importing data into its own
+  storage — matches how the real ~150MB dataset should be queried (no redundant copy)
+  and lets small CSV fixtures substitute transparently for tests.
+- `mark_investigated`'s state is a real, ephemeral, in-memory table (not Postgres) —
+  matches Section 9.6's explicit "state is ephemeral and reset per demo run"; the
+  durable record of the write action is the audit log the gateway produces around the
+  call, not this table.
+- Pinned `mcp[cli]==1.28.1` in both AML MCP server Dockerfiles rather than leaving
+  either on a lower-bound-only constraint — standalone service Dockerfiles have no
+  lockfile of their own, so an unpinned dependency is a live reproducibility risk, not
+  just a hypothetical one (it broke a build today).
+
+**Current state:**
+- Phase 3 Day 12 is done and checked off in `docs/ROADMAP.md`. Both AML MCP servers
+  (OFAC sanctions, transaction-graph) now exist, are independently containerized, and
+  proxy real tool calls through the live gateway.
+- **Named gap, deliberately not done today:** neither AML server is deployed into the
+  local `kind` cluster yet (`dev/mcp-servers/` only has `hello-echo` so far).
+  Transaction-graph's real dataset would need `kind.yaml`'s `extraMounts` to
+  bind-mount `~/.interpose/data/ibm-aml/` into the cluster nodes — not added
+  speculatively; deferred to whenever Day 13's investigation agent actually needs a
+  real in-cluster run.
+
+**Next steps:**
+1. Day 13 — the AML investigation agent (LangGraph client): a 5-node flow (Section
+   9.7) that picks a seeded suspicious account, drives Discovery/Assessment/Report
+   Composer nodes calling both AML MCP servers' tools through the gateway, ~40 tool
+   calls end-to-end (minus HITL, which needs Day 14's policy pack first).
+2. Day 14 — the AML policy pack (7 policies, Section 9.8), including the custom
+   `aml-sanctions-required` and `aml-structuring-alert` policies and the
+   `aml-write-hitl-gate` that gates `mark_investigated` specifically.
+3. Revisit the deferred kind/`extraMounts` deployment once an in-cluster run is
+   actually needed (Day 13 or later), rather than before.
+
+**Loose ends / reminders:**
+- The Kaggle API token pasted into an earlier chat message should still be rotated
+  (Settings → API → regenerate) — flagged again, still not confirmed done.
+
+---
+
 ## 2026-07-27 (cont'd 2) — Phase 3 Day 11: OFAC sanctions MCP server, real data quirks + a real fuzzy-matching bug
 
 **What happened:**

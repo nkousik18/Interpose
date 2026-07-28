@@ -281,6 +281,45 @@ job, populated Grafana dashboards.
       (`rapidfuzz`) isolated from the core gateway install, same pattern as
       `analytics`; CI updated to install it. 185 total tests green, `ruff` clean.
 
+- [x] Day 12 — Transaction-graph MCP server (`mcp-servers/transaction-graph/`), same
+      standalone-service pattern as Day 11's OFAC server. Six tools per Section 9.6:
+      `query_transactions`, `get_account` (live summary stats -- the dataset has no
+      summary columns), `neighbors` (Python BFS, hop-capped, not a recursive CTE --
+      easier to reason about and to cap against a 500K-account graph), `subgraph` (the
+      induced subgraph over a requested account set), `structuring_check` (a canned
+      "sum of sub-threshold deposits past the BSA CTR threshold" heuristic, window
+      anchored to the account's own last activity, not wall-clock -- this is 2022
+      data), and `mark_investigated` (the one write tool, landing in an in-memory,
+      per-restart-ephemeral table -- exists solely to give Day 14's HITL policy pack
+      something real to gate). Data loaded as DuckDB views directly over the
+      Spark-subsampled Parquet (`data/README.md`) -- no separate load step, filters
+      push down into the Parquet scan. `store.py`'s query logic is fully decoupled
+      from FastMCP/Context, so all 16 unit tests run against a tiny in-memory fixture
+      table, no files, no server. **Two real bugs found via this project's own
+      testing:** (1) DuckDB's `read_csv_auto` (used only by small test-fixture CSVs)
+      infers numeric-looking ID columns like `bank_id: "1"` as INTEGER, while the real
+      Parquet data is always string-typed (Spark's un-inferred CSV read) --
+      `AccountRecord`'s `bank_id: str` validation caught the mismatch; fixed by
+      explicitly `CAST`ing every ID-shaped column to VARCHAR in the view definitions,
+      regardless of source. (2) Building the Docker image failed outright --
+      `mcp[cli]>=1.28.1`'s unpinned lower bound resolved to a just-released breaking
+      `mcp==2.0.0` that renamed `mcp.server.fastmcp`; fixed by pinning the exact
+      version the root project's `uv.lock` already resolved (`mcp[cli]==1.28.1`) in
+      *both* this Dockerfile and `ofac-sanctions/Dockerfile` (which had the identical
+      latent bug, unnoticed until a fresh rebuild). 7 new integration tests against
+      the real gateway (fixture CSVs, not the ~150MB real dataset). **Live-verified
+      twice**: once via `uv run pytest` against the real gateway, and once as a real
+      Docker container bind-mounting the actual subsampled dataset
+      (`docker run -v ~/.interpose/data/ibm-aml:...`), confirming
+      `transactions=3158483 accounts=500000` loaded (matching `subsample_report.json`
+      exactly) and a real `get_account`/`neighbors`/`structuring_check` call against a
+      real high-volume account. 208 total tests green, `ruff` clean. **Named gap,
+      deferred:** not yet deployed into the local `kind` cluster (`dev/mcp-servers/`)
+      -- doing that for real needs `kind.yaml`'s `extraMounts` to bind-mount the host's
+      dataset into the cluster, which hasn't been added; left for whenever Day 13's
+      investigation agent needs a real in-cluster run rather than done speculatively
+      now (see `mcp-servers/transaction-graph/README.md`'s named-gap note).
+
 **Gate:** AML demo runs end-to-end (agent → 40+ tool calls → HITL hold → resume →
 investigation report); Spark job aggregates 10M synthetic records; audit verification passes.
 
