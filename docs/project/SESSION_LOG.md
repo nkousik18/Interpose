@@ -10,6 +10,90 @@ Newest entry first. One entry per work session (not necessarily per calendar day
 
 ---
 
+## 2026-07-30 — Phase 3 Day 13: AML investigation agent, an OFFSET bug, a real Groq run
+
+**What happened:**
+- Closed a loose end from a prior session first: `docs/project/WORKING_CONVENTIONS.md`
+  had been written but never committed. Branched, committed, opened PR #11, waited for
+  CI, squash-merged -- its own small unit of work, separate from today's real focus.
+- Built the AML investigation agent (`agents/aml-investigator/`), Phase 3 Day 13 per
+  `docs/ROADMAP.md`: a *client* of Interpose, not part of it -- explained in the new
+  `concepts/30-client-agents-vs-control-plane-agents.md`, alongside why it's a linear
+  5-node graph (Discovery → Enrichment → Assessment → Recommendation → Report) rather
+  than a ReAct loop.
+- `aml_investigator.gateway_client.InvestigationClient`: two real `ClientSession`s (one
+  per upstream route) through the live gateway, recording every call (ok/error) to a
+  `call_log` for the integration test to inspect.
+- Discovery/Enrichment nodes: pure tool-calling, no LLM. Assessment/Report nodes reuse
+  `interpose.control_plane.llm.generate_structured` (Groq) rather than a second
+  wrapper -- a deliberate exception to `mcp-servers/`'s zero-`interpose`-dependency
+  rule, since this agent has no independent-third-party fiction to protect. Both LLM
+  nodes have a deterministic fallback on `LLMError`, same discipline as Agent A3's
+  HITL narrative (Day 8).
+- Seed alert generator (`aml_investigator.seed.pick_seed_alert`) queries the real
+  subsampled Parquet directly via DuckDB for a real labeled-laundering account, no
+  dependency on the transaction-graph server's own tools (which don't expose
+  `is_laundering` as a filter, by design -- that's the answer the agent investigates
+  toward, not starts from).
+- **Two real bugs found by this module's own tests, before either shipped:**
+  (1) the seed generator's first version used a fixed `OFFSET (seed % 97)`, which only
+  works by accident against the real dataset's 35,230 laundering rows and returned
+  nothing against a 2-3-row test fixture -- fixed by bounding the offset to the real
+  candidate count (`seed % count(*)`) instead of a number tuned to one dataset's size.
+  (2) Enrichment originally fetched `get_entity_detail` for *any* sanctions-check
+  result, but `check_entity` always returns its single best candidate whether or not
+  it clears the match threshold -- fixed to gate on `is_match`, caught by a unit test
+  before it ever reached the live integration run.
+- 31 new tests: 24 unit (fake gateway client, fake LLM, no network or API key) plus 2
+  new live integration tests (`tests/integration/test_investigation_agent.py`) driving
+  the full graph through a real gateway + real `ofac-sanctions` + real
+  `transaction-graph` servers (all three as live subprocesses, fixture data via a new
+  `aml_investigator_stack` conftest fixture). 237 total tests green, `ruff` clean.
+- **Live-verified a second way, beyond the automated suite**: ran
+  `agents/aml-investigator/run_investigation.py` by hand against the same fixture
+  stack, but with this repo's real `.env` `GROQ_API_KEY` -- a genuine Groq call
+  produced a valid `Assessment` and `InvestigationReport`, both validating against
+  their strict JSON schemas on the first try (no fallback triggered), correctly
+  recommending `escalate` on the fixture's seeded structuring pattern and recording it
+  via a real `mark_investigated` write.
+
+**Decisions made:**
+- Investigation agent reuses `interpose.control_plane.llm.generate_structured`
+  directly rather than a second LLM wrapper -- explained in concept 30.
+- New `agents` uv dependency group (`duckdb`), isolated the same way as `analytics`/
+  `mcp-servers`, since only the seed generator needs it.
+- `agents/aml-investigator/src` added to pytest's `pythonpath` list, but as one real
+  importable package (`aml_investigator`), not bare top-level modules -- avoids the
+  cross-server module-name collision the existing `mcp-servers` pythonpath entries
+  already have to work around (see `pyproject.toml`'s own comment on that).
+
+**Current state:**
+- Phase 3 Day 13 done and checked off in `docs/ROADMAP.md`. The investigation agent
+  runs its full flow end-to-end through the real gateway, with a real LLM, on fixture
+  data. Day 14 (the 7-policy AML pack) and Day 15 (Spark analytics + full demo script)
+  are the remaining Phase 3 gate items.
+
+**Next steps:**
+1. Day 14 — AML policy pack (`policies/packs/aml/`, all 7 policies per Section 9.8),
+   including the two custom Python policies (`aml-sanctions-required`,
+   `aml-structuring-alert`). Test: policy fires at expected trigger points during a
+   full investigation run through this agent -- including, for the first time, an
+   actual HITL hold-and-resume on `mark_investigated` via `aml-write-hitl-gate.yaml`.
+2. Day 15 — Spark synthetic telemetry (10M records) + aggregation job + populated
+   Grafana dashboards + the scripted end-to-end demo
+   (`interpose demo aml --setup && --run`) with a real HITL cycle. This is also where
+   `run_investigation.py` gets wired into the Typer CLI.
+3. Consider running the investigation agent against the *real* subsampled dataset (not
+   just fixtures) once Day 14's pack exists, to see real-scale tool-call volume
+   (Section 9.7's ~40-60 calls, vs. the ~7 the small fixture graph produces).
+
+**Loose ends / reminders:**
+- The Kaggle API token pasted into an early chat message should still be rotated
+  (Settings → API → regenerate) -- flagged again, still not confirmed done. Asked the
+  owner directly this session rather than silently dropping it.
+
+---
+
 ## 2026-07-28 — Phase 3 Day 12: transaction-graph MCP server, a VARCHAR bug and an unpinned-dependency bug
 
 **What happened:**

@@ -320,6 +320,46 @@ job, populated Grafana dashboards.
       investigation agent needs a real in-cluster run rather than done speculatively
       now (see `mcp-servers/transaction-graph/README.md`'s named-gap note).
 
+- [x] Day 13 — AML investigation agent (`agents/aml-investigator/`), a *client* of
+      Interpose rather than part of it -- see `concepts/30-client-agents-vs-control-plane-agents.md`
+      for why that distinction matters, in contrast to `src/interpose/control_plane/`'s
+      separate, reactive LangGraph system. A linear 5-node graph per Section 9.7
+      (Discovery → Enrichment → Assessment → Recommendation → Report), deliberately
+      not a ReAct loop -- a compliance procedure needs to guarantee its own order of
+      operations, not leave tool selection to the model. Discovery/Enrichment are pure
+      tool-calling (no LLM); Assessment/Report reuse
+      `interpose.control_plane.llm.generate_structured` (Groq, strict schema) rather
+      than a second hand-rolled wrapper, each with a deterministic fallback if the LLM
+      call fails, same discipline as Agent A3's HITL narrative fallback (Day 8).
+      Recommendation attempts `mark_investigated` -- the HITL trigger point -- which
+      passes through untouched today since no AML policy pack exists yet (Day 14).
+      Seed alert generator (`aml_investigator.seed.pick_seed_alert`) queries the real
+      subsampled Parquet directly via DuckDB for a real labeled-laundering account.
+      **One real bug found by this module's own unit tests:** the seed generator's
+      first version picked a "random" row via a fixed `OFFSET (seed % 97)`, which
+      happens to work against the real dataset's 35,230 laundering-labeled rows but
+      returned nothing at all against a small test fixture with only 2-3 candidates --
+      fixed by bounding the offset to the real candidate count (`seed % count(*)`)
+      instead of a number that only happened to be big enough for one dataset. A
+      second, smaller correctness fix caught before it shipped: Enrichment originally
+      fetched `get_entity_detail` for *any* sanctions-check hit, but `check_entity`
+      always returns its single best candidate whether or not it's a good one --
+      fixed to only fetch full detail when `is_match` actually cleared the threshold.
+      31 new tests (24 unit against fake clients/fake LLMs, no network or API key
+      needed; 2 live integration tests through the real gateway + real
+      ofac-sanctions + real transaction-graph servers, fixture data). 237 total tests
+      green, `ruff` clean. **Live-verified twice**: once via the integration suite
+      (real gateway, real servers, fake LLM), and once as a genuine end-to-end run
+      (`run_investigation.py`) against the real gateway + fixture MCP servers *and*
+      a real Groq API call -- a real `Assessment` and `InvestigationReport` validated
+      against their strict JSON schemas on the first try, no fallback triggered,
+      correctly recommending `escalate` on a seeded structuring pattern and recording
+      it via a real `mark_investigated` write. **Named gaps:** not yet wired into the
+      Typer CLI (`interpose demo aml`, Section 9.10 -- Day 15); no run yet against the
+      real ~150MB subsampled dataset in the automated suite (fixture data only,
+      matching every other day's MCP-server test split); not deployed in-cluster
+      (same gap as `transaction-graph`'s own README).
+
 **Gate:** AML demo runs end-to-end (agent → 40+ tool calls → HITL hold → resume →
 investigation report); Spark job aggregates 10M synthetic records; audit verification passes.
 

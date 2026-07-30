@@ -120,6 +120,50 @@ def transaction_graph_upstream_and_gateway():
                 proc.wait(timeout=5)
 
 
+@pytest.fixture(scope="module")
+def aml_investigator_stack():
+    """The investigation agent (Phase 3 Day 13) needs *both* upstream servers behind
+    one gateway at once -- unlike `ofac_upstream_and_gateway`/
+    `transaction_graph_upstream_and_gateway`, which each test one server in
+    isolation. `config/upstreams.yaml` already routes both `ofac-sanctions` and
+    `transaction-graph` (plus `hello-echo`), so no separate routing config is needed
+    here, just both upstream processes running together. Fixture CSVs throughout,
+    never the real datasets."""
+    ofac_env = {
+        **os.environ,
+        "OFAC_SDN_SOURCE": str(OFAC_FIXTURES / "sdn_sample.csv"),
+        "OFAC_ALT_SOURCE": str(OFAC_FIXTURES / "alt_sample.csv"),
+    }
+    tg_env = {
+        **os.environ,
+        "TRANSACTION_GRAPH_TRANSACTIONS_SOURCE": str(
+            TRANSACTION_GRAPH_FIXTURES / "transactions_sample.csv"
+        ),
+        "TRANSACTION_GRAPH_ACCOUNTS_SOURCE": str(
+            TRANSACTION_GRAPH_FIXTURES / "accounts_sample.csv"
+        ),
+    }
+    ofac = subprocess.Popen([sys.executable, str(OFAC_SERVER_SCRIPT)], env=ofac_env)
+    transaction_graph = subprocess.Popen(
+        [sys.executable, str(TRANSACTION_GRAPH_SERVER_SCRIPT)], env=tg_env
+    )
+    gateway = subprocess.Popen([sys.executable, "-m", "interpose.gateway"], cwd=REPO_ROOT)
+    try:
+        _wait_for_port("127.0.0.1", 9002)
+        _wait_for_port("127.0.0.1", 9003)
+        _wait_for_port("127.0.0.1", 8000)
+        yield
+    finally:
+        for proc in (gateway, transaction_graph, ofac):
+            proc.terminate()
+        for proc in (gateway, transaction_graph, ofac):
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+
+
 @pytest.fixture(autouse=True)
 def clean_state():
     """Every test starts from an empty audit table and an empty HITL ticket queue.

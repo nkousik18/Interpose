@@ -50,6 +50,13 @@ mcp-servers = [
     "rapidfuzz>=3.10",
     "duckdb>=1.1",
 ]
+# Dependencies only agents/aml-investigator/ needs -- isolated the same way as
+# `mcp-servers`, since a bare gateway install has no use for a DuckDB-querying seed
+# generator (Section 6.16's module boundary: agents/ is its own component, not part
+# of src/interpose/).
+agents = [
+    "duckdb>=1.1",
+]
 
 [tool.ruff]
 line-length = 100
@@ -77,4 +84,8 @@ asyncio_mode = "auto"
 # test file below imports what it needs by its own explicit path via
 # importlib/conftest, not bare `import config`, to avoid that collision -- see
 # tests/unit/mcp_servers/conftest.py.
-pythonpath = ["mcp-servers/ofac-sanctions/src", "mcp-servers/transaction-graph/src"]
+pythonpath = [
+    "mcp-servers/ofac-sanctions/src",
+    "mcp-servers/transaction-graph/src",
+    "agents/aml-investigator/src",
+]
