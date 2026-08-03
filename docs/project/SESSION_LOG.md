@@ -10,6 +10,101 @@ Newest entry first. One entry per work session (not necessarily per calendar day
 
 ---
 
+## 2026-08-03 — Phase 3 Day 14: AML policy pack, and two protocol assumptions that were wrong
+
+**What happened:**
+- Built the AML policy pack (`policies/packs/aml/`), Phase 3 Day 14 per
+  `docs/ROADMAP.md` -- 6 of Section 9.8's 7 policies active. Before writing any
+  YAML, investigated what the pack would actually need from the engine (per CLAUDE.md's
+  "explain before doing" habit) and found two real gaps: response-side (Stage 8)
+  policy evaluation didn't exist at all -- the gateway only ever streamed raw,
+  unparsed response bytes through -- and there was no "custom" policy mechanism for
+  the two policies (`aml-sanctions-required`, `aml-structuring-alert`) that need real
+  Python logic, not declarative YAML matching.
+- Built both for real. `interpose.policies.custom`: a named-registry plugin design
+  for custom policies (a security boundary -- policy YAML references code by name,
+  never embeds it, since a pack is data a deployer drops in at runtime).
+  `_forward_buffered`/`PolicySet.evaluate_response` in the gateway: only buffers and
+  parses a response when the compiled `PolicySet` actually has a response-side
+  policy, so every other call (the overwhelming majority) keeps the exact streaming
+  path that's worked since Day 1 -- confirmed by the full existing suite (276 tests)
+  passing unchanged before any AML-specific work even started.
+- Real `pii_redaction` enforcement (regex-based: SSN, credit card, bank
+  routing+account), replacing the Day-3 stub. New `tags` column on `audit_entries`
+  (a real Alembic migration, included in the hash chain like every other field) backs
+  `aml-audit-tagging`'s pack-wide labeling. `CostCapEffect` (P7) added as a
+  schema-only stub, same status `pii_redaction` had for 10 days -- the gateway has
+  no visibility into LLM token cost at all, so there's nothing real to enforce; the
+  user chose this over a redefined "cost per tool call" version when asked directly.
+- **Three real design flaws found before or via live testing, all fixed:**
+  1. `aml-sanctions-required`'s first version correlated on `session_id`. Live-tested
+     by opening two real connections through the same gateway to two different
+     upstream servers and comparing session IDs directly: completely different
+     values. `Mcp-Session-Id` is assigned independently by *each* upstream server
+     during its own `initialize` handshake -- it was never going to correlate
+     anything across servers. Redesigned around `agent_id` (the `Authorization`
+     header) instead; `agents/aml-investigator`'s `InvestigationClient` now sends one
+     consistent bearer token across both its connections so this actually works.
+  2. The buffered response path assumed bare JSON; the very first live call failed
+     with a JSON decode error. FastMCP's streamable-HTTP transport responds
+     SSE-framed (`text/event-stream`) for every `tools/call`, never plain JSON --
+     fixed with explicit SSE encode/decode helpers
+     (`_decode_mcp_body`/`_encode_mcp_body`).
+  3. `aml-sanctions-required`'s original `tools: ["*"]` scope would have gated
+     `get_account` -- but `get_account` is the only source of the entity name
+     `check_entity` needs, an unsatisfiable chicken-and-egg precondition. Fixed by
+     excluding `get_account` from the policy's scope, and reordering the
+     investigation agent's Discovery node to call `check_entity` immediately after
+     `get_account`, before any other transaction-graph call.
+  4. Smaller, found via the integration test itself: `InvestigationClient`'s error
+     handling only ever checked `result.isError` (a tool-implementation error) --
+     a gateway policy DENY is a JSON-RPC-envelope-level error, which the MCP SDK
+     raises as `McpError` from `call_tool` itself rather than returning. This bug
+     shipped on Day 13 and was invisible until today, since no policy pack existed
+     yet to ever produce a real DENY.
+- 37 new tests (unit: schema/dispatch/redaction/loader-manifest coverage; 6 new live
+  integration tests driving the real pack through the real gateway + real MCP
+  servers). 293 total tests green, `ruff` clean.
+- **Live-verified twice more, beyond the automated suite**: once confirming the
+  `agent_id` fix directly (two real connections, compared session IDs), and once
+  running the full investigation agent end-to-end -- real Groq calls, a real HITL
+  approve cycle (a concurrent task polling and approving the ticket, same pattern as
+  Day 6's own HITL test), against the AML-pack-loaded gateway. Produced a clean
+  14-row audit trail: sanctions-required correctly denying an out-of-order call,
+  structuring-alert tagging a high-severity incident, the write HITL gate holding
+  and then completing `mark_investigated`, every row tagged `pack:aml`/
+  `regulation:BSA`.
+
+**Decisions made:**
+- P7 (`aml-cost-cap`): schema-only stub, not an active pack policy -- user's explicit
+  choice when asked, given the gateway has no LLM-cost visibility at all.
+- `aml-sanctions-required` and P4's rate limit are both intentionally narrower than
+  Section 9.8's literal wording (agent-level not per-account; one threshold not two)
+  -- documented in `policies/packs/aml/README.md`, not silently reinterpreted.
+- Custom policies dispatch through a named-function registry, never through
+  YAML-embedded code -- a deliberate security boundary given policy packs are meant
+  to be swappable, deployer-supplied configuration.
+
+**Current state:**
+- Phase 3 Day 14 done and checked off. The AML pack is real and fires correctly at
+  every trigger point Section 9.8 describes (except the two named, documented
+  narrowings). Day 15 (Spark analytics + the scripted end-to-end demo) is the last
+  remaining Phase 3 gate item.
+
+**Next steps:**
+1. Day 15 -- Spark synthetic telemetry (10M records) + aggregation job + populated
+   Grafana dashboards + the scripted end-to-end demo
+   (`interpose demo aml --setup && --run`), wiring `run_investigation.py` into the
+   Typer CLI for the first time.
+2. Consider whether the investigation agent should run against the real ~150MB
+   subsampled dataset (not just fixtures) in a manual live-verify pass once Day 15's
+   demo script exists, to see real-scale tool-call volume.
+
+**Loose ends / reminders:**
+- None new this session.
+
+---
+
 ## 2026-07-30 — Phase 3 Day 13: AML investigation agent, an OFFSET bug, a real Groq run
 
 **What happened:**

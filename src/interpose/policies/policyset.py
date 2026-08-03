@@ -1,13 +1,16 @@
 """In-memory PolicySet compilation and evaluation.
 
-Covers Stage 4 (policy compilation) and Stage 5 (policy evaluation) from
-docs/INTERPOSE_SCOPING.md Section 6.5, for four of the five effect types: allowlist,
-denylist, rate_limit, and (as of Phase 2 Day 6) hitl_gate, which produces a HOLD
-outcome carrying enough information for the gateway to open a ticket
-(`interpose.session.hitl`). `pii_redaction` still just parses (schema.py) --
-`PolicySet.evaluate` raises `NotImplementedError` if it shows up in an applicable
-policy set, rather than silently letting the call through as if the policy didn't
-exist.
+Covers Stage 4 (policy compilation), Stage 5 (request-side policy evaluation), and --
+new as of Phase 3 Day 14 -- Stage 8 (response-side policy evaluation) from
+docs/INTERPOSE_SCOPING.md Section 6.5.
+
+Request-side (`evaluate`, Stage 5): `allowlist -> denylist -> rate_limit -> custom
+(request-stage) -> hitl_gate`. Response-side (`evaluate_response`, Stage 8):
+`pii_redaction` and `custom` (response-stage) policies, applied to the upstream
+response after it's back but before it reaches the calling agent.
+
+`evaluate` is `async` (unlike Phase 1-3's synchronous version) because a request-stage
+custom policy can need real I/O -- `aml-sanctions-required` queries the audit log.
 
 Allowlist semantics, spelled out because they're not obvious from the schema alone:
 an allowlist policy for a server doesn't just grant its own tools -- its presence
@@ -24,12 +27,23 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
+from interpose.policies.custom import (
+    REQUEST_POLICIES,
+    RESPONSE_POLICIES,
+    RequestPolicyContext,
+    ResponsePolicyContext,
+    UnknownCustomPolicyError,
+)
+from interpose.policies.redaction import redact_json_value
 from interpose.policies.schema import (
     EFFECT_ORDER,
     AllowlistEffect,
+    CostCapEffect,
+    CustomEffect,
     DenylistEffect,
     HitlGateEffect,
     PiiRedactionEffect,
@@ -52,6 +66,15 @@ class PolicyDecision:
     # Only set when outcome is HOLD -- what the gateway needs to open a HITL ticket.
     reviewer_group: str | None = None
     timeout_seconds: int | None = None
+
+
+@dataclass(frozen=True)
+class ResponseEvaluationResult:
+    """Stage 8's output: the (possibly redacted) response payload to re-serialize
+    back to the agent, plus any tags response-side policies contributed."""
+
+    payload: Any
+    tags: list[str] = field(default_factory=list)
 
 
 class RateLimiter:
@@ -90,7 +113,26 @@ class PolicySet:
         """Applicable policies in evaluation order (for logging/audit, and tests)."""
         return tuple(self._policies)
 
-    def evaluate(self, rate_limiter: RateLimiter, subject: str = "global") -> PolicyDecision:
+    @property
+    def static_tags(self) -> list[str]:
+        """Every applicable policy's `audit.tag` values, deduped -- independent of
+        which policy "wins" the PASS/DENY/HOLD decision. This is what makes
+        `tag_only` policies like `aml-audit-tagging` work: they never win the
+        decision (they have no gating behavior at all), but their tags still land on
+        every matching audit entry."""
+        tags: list[str] = []
+        for policy in self._policies:
+            for tag in policy.audit.tag:
+                if tag not in tags:
+                    tags.append(tag)
+        return tags
+
+    async def evaluate(
+        self,
+        rate_limiter: RateLimiter,
+        subject: str = "global",
+        request_context: RequestPolicyContext | None = None,
+    ) -> PolicyDecision:
         allow_hit = next((p for p in self._policies if isinstance(p.effect, AllowlistEffect)), None)
         if allow_hit is not None:
             return PolicyDecision(Outcome.PASS, allow_hit.policy, "allowlisted")
@@ -109,11 +151,22 @@ class PolicySet:
                     return PolicyDecision(Outcome.DENY, policy.policy, "rate_limit_exceeded")
 
         for policy in self._policies:
-            if isinstance(policy.effect, PiiRedactionEffect):
-                raise NotImplementedError(
-                    f"pii_redaction policies are not enforced yet (policy "
-                    f"{policy.policy!r}); schema-only as of Phase 1 Day 3"
-                )
+            effect = policy.effect
+            if isinstance(effect, CustomEffect) and effect.stage == "request":
+                fn = REQUEST_POLICIES.get(effect.name)
+                if fn is None:
+                    raise UnknownCustomPolicyError(
+                        f"policy {policy.policy!r} references unknown request-side "
+                        f"custom policy {effect.name!r}"
+                    )
+                if request_context is None:
+                    raise ValueError(
+                        f"policy {policy.policy!r} needs a RequestPolicyContext but "
+                        "none was provided"
+                    )
+                reason = await fn(policy, request_context)
+                if reason is not None:
+                    return PolicyDecision(Outcome.DENY, policy.policy, reason)
 
         for policy in self._policies:
             effect = policy.effect
@@ -126,7 +179,57 @@ class PolicySet:
                     timeout_seconds=effect.timeout_seconds,
                 )
 
+        for policy in self._policies:
+            if isinstance(policy.effect, CostCapEffect):
+                raise NotImplementedError(
+                    f"cost_cap policies are not enforced yet (policy {policy.policy!r}) -- "
+                    "the gateway has no visibility into LLM token cost, only tool-call "
+                    "volume; see schema.CostCapEffect's docstring"
+                )
+
         return PolicyDecision(Outcome.PASS)
+
+    async def evaluate_response(
+        self, payload: Any, response_context: ResponsePolicyContext
+    ) -> ResponseEvaluationResult:
+        """Stage 8: redact PII from `payload` (the tool's parsed `structuredContent`
+        or `content`) and run any response-stage custom policies. Only called for
+        calls that reached PASS or an approved HOLD -- there's no response to
+        evaluate for a DENY."""
+        tags: list[str] = []
+
+        pattern_names: list[str] = []
+        for policy in self._policies:
+            if isinstance(policy.effect, PiiRedactionEffect):
+                pattern_names.extend(policy.effect.patterns)
+        if pattern_names:
+            payload = redact_json_value(payload, pattern_names)
+
+        for policy in self._policies:
+            effect = policy.effect
+            if isinstance(effect, CustomEffect) and effect.stage == "response":
+                fn = RESPONSE_POLICIES.get(effect.name)
+                if fn is None:
+                    raise UnknownCustomPolicyError(
+                        f"policy {policy.policy!r} references unknown response-side "
+                        f"custom policy {effect.name!r}"
+                    )
+                tags.extend(await fn(policy, response_context))
+
+        return ResponseEvaluationResult(payload=payload, tags=tags)
+
+    @property
+    def has_response_side_policies(self) -> bool:
+        """Whether this PolicySet needs Stage 8 evaluation at all -- the gateway uses
+        this to decide whether a call's response must be buffered and parsed
+        (needed for redaction/response-stage custom policies) or can stay a plain
+        streamed passthrough (every server/tool with no such policy, which is most
+        of them)."""
+        return any(
+            isinstance(p.effect, PiiRedactionEffect)
+            or (isinstance(p.effect, CustomEffect) and p.effect.stage == "response")
+            for p in self._policies
+        )
 
 
 class PolicyEngine:
@@ -147,6 +250,10 @@ class PolicyEngine:
         if key not in self._cache:
             applicable = [p for p in self._policies if p.applies_to.matches(server, tool)]
             applicable.sort(key=lambda p: EFFECT_ORDER.index(p.effect.type))
+            # A server-scoped allowlist ("*") only turns on default-deny for the
+            # literal server it's declared for, not every server -- a wildcard
+            # *tools* match ("*" in applies_to.tools) is orthogonal to that and
+            # doesn't change this flag at all.
             self._cache[key] = PolicySet(applicable, self._server_has_allowlist.get(server, False))
         return self._cache[key]
 

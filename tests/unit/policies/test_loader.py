@@ -4,8 +4,17 @@ from pathlib import Path
 
 import pytest
 
-from interpose.policies.loader import load_policy_file, load_policy_pack
+from interpose.policies.loader import load_pack_manifest, load_policy_file, load_policy_pack
 from interpose.policies.schema import AllowlistEffect, DenylistEffect
+
+MANIFEST_YAML = """
+name: aml
+version: 0.1.0
+description: Test pack.
+policies:
+  - read-only-allowlist
+  - no-deletes
+"""
 
 ALLOWLIST_YAML = """
 policy: read-only-allowlist
@@ -89,3 +98,43 @@ class TestLoadPolicyPack:
         _write(tmp_path, "b.yaml", duplicate)
         with pytest.raises(ValueError, match="duplicate policy name"):
             load_policy_pack(tmp_path)
+
+    def test_pack_yaml_is_never_loaded_as_a_policy(self, tmp_path: Path) -> None:
+        _write(tmp_path, "a-allowlist.yaml", ALLOWLIST_YAML)
+        _write(tmp_path, "b-denylist.yaml", DENYLIST_YAML)
+        _write(tmp_path, "pack.yaml", MANIFEST_YAML)
+        policies = load_policy_pack(tmp_path)
+        assert {p.policy for p in policies} == {"read-only-allowlist", "no-deletes"}
+
+    def test_raises_when_manifest_lists_a_policy_missing_from_the_directory(
+        self, tmp_path: Path
+    ) -> None:
+        _write(tmp_path, "a-allowlist.yaml", ALLOWLIST_YAML)
+        _write(tmp_path, "pack.yaml", MANIFEST_YAML)  # also lists "no-deletes"
+        with pytest.raises(ValueError, match="missing"):
+            load_policy_pack(tmp_path)
+
+    def test_raises_when_directory_has_a_policy_the_manifest_does_not_list(
+        self, tmp_path: Path
+    ) -> None:
+        _write(tmp_path, "a-allowlist.yaml", ALLOWLIST_YAML)
+        _write(tmp_path, "b-denylist.yaml", DENYLIST_YAML)
+        extra = ALLOWLIST_YAML.replace("read-only-allowlist", "another-allowlist").replace(
+            "check_name", "other_tool"
+        )
+        _write(tmp_path, "c-extra.yaml", extra)
+        _write(tmp_path, "pack.yaml", MANIFEST_YAML)  # only lists the first two
+        with pytest.raises(ValueError, match="extra"):
+            load_policy_pack(tmp_path)
+
+
+class TestLoadPackManifest:
+    def test_loads_a_manifest(self, tmp_path: Path) -> None:
+        _write(tmp_path, "pack.yaml", MANIFEST_YAML)
+        manifest = load_pack_manifest(tmp_path)
+        assert manifest is not None
+        assert manifest.name == "aml"
+        assert manifest.policies == ["read-only-allowlist", "no-deletes"]
+
+    def test_none_when_no_manifest_present(self, tmp_path: Path) -> None:
+        assert load_pack_manifest(tmp_path) is None

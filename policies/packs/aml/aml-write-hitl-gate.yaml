@@ -1,0 +1,19 @@
+# P2 (Section 9.8): every write tool on transaction-graph requires HITL approval.
+# mark_investigated is the only write tool that exists on this server today
+# (mcp-servers/transaction-graph/README.md); listed by name rather than "*" so a
+# future read-only tool added to this server doesn't accidentally start requiring
+# HITL too.
+policy: aml-write-hitl-gate
+description: >
+  Mutating actions in an AML investigation require documented human authorization
+  before they take effect.
+applies_to:
+  server: transaction-graph
+  tools: [mark_investigated]
+effect:
+  type: hitl_gate
+  reviewer_group: aml-analysts
+  timeout_seconds: 3600
+audit:
+  severity: high
+  tag: [aml, write, hitl]

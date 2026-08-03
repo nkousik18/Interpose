@@ -57,6 +57,23 @@ class TestDiscoveryNode:
         assert from_date < date(2010, 1, 1)
         assert to_date > date(2030, 1, 1)
 
+    async def test_check_entity_runs_immediately_after_get_account(self) -> None:
+        # Phase 3 Day 14: aml-sanctions-required denies query_transactions/neighbors
+        # unless check_entity already ran earlier in the session -- get_account must
+        # come first (it's the only source of the entity name check_entity needs),
+        # but every other transaction-graph call must come after check_entity, not
+        # before it.
+        client = _fake_client()
+        node = make_discovery_node(client)
+        state = InvestigationState(alert=Alert(account_id="1:ACC001", alert_type="SUSPICIOUS_WIRE"))
+
+        await node(state)
+
+        call_order = [call[0] for call in client.mock_calls]
+        assert call_order.index("get_account") < call_order.index("check_entity")
+        assert call_order.index("check_entity") < call_order.index("query_transactions")
+        assert call_order.index("check_entity") < call_order.index("neighbors")
+
 
 class TestEnrichmentNode:
     def _discovered_state(

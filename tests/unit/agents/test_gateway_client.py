@@ -16,6 +16,8 @@ from aml_investigator.gateway_client import (
     InvestigationClient,
     ToolCallError,
 )
+from mcp.shared.exceptions import McpError
+from mcp.types import ErrorData
 
 
 def _ok_result(structured_content: object) -> SimpleNamespace:
@@ -69,6 +71,25 @@ async def test_error_result_raises_tool_call_error_and_logs_a_failed_call() -> N
         await client.get_account("1:ACC001")
     assert client.call_log[-1].ok is False
     assert client.call_log[-1].error == "denied by policy"
+
+
+async def test_mcp_error_raises_tool_call_error_with_message_and_data() -> None:
+    # A gateway-level policy denial (DENY) surfaces as a JSON-RPC-envelope error --
+    # the MCP SDK raises McpError from call_tool itself, never returns a result with
+    # isError=True. Missing this case was a real bug (Phase 3 Day 14): Day 13's
+    # client only ever saw PASS/tool-level-error responses, since no policy pack
+    # existed yet to produce a real DENY.
+    client = InvestigationClient()
+    error = McpError(
+        ErrorData(code=-32001, message="policy_denied", data={"reason": "sanctions required"})
+    )
+    fake_session = SimpleNamespace(call_tool=AsyncMock(side_effect=error))
+    client._sessions[TRANSACTION_GRAPH_ROUTE] = fake_session
+
+    with pytest.raises(ToolCallError, match="sanctions required"):
+        await client.get_account("1:ACC001")
+    assert client.call_log[-1].ok is False
+    assert "policy_denied" in client.call_log[-1].error
 
 
 async def test_successful_call_is_recorded_in_the_call_log() -> None:

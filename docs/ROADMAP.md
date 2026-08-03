@@ -360,6 +360,52 @@ job, populated Grafana dashboards.
       matching every other day's MCP-server test split); not deployed in-cluster
       (same gap as `transaction-graph`'s own README).
 
+- [x] Day 14 — AML policy pack (`policies/packs/aml/`), 6 of Section 9.8's 7
+      policies active (P7/`aml-cost-cap` shipped as a schema-only stub, deliberately
+      not an active pack file -- see the pack's own README). Building this exposed
+      real gaps in the engine, not just missing YAML: response-side (Stage 8)
+      policy evaluation didn't exist at all (the gateway only ever streamed raw,
+      unparsed response bytes), and neither did any mechanism for a "custom" policy
+      effect. Both built for real this day -- `interpose.policies.custom`'s
+      named-registry plugin design (a security boundary: policy YAML references
+      code, never embeds it), and `_forward_buffered`/`evaluate_response` in the
+      gateway, gated so only `{server, tool}` pairs that actually need Stage 8
+      processing pay for it; every other call keeps the exact streaming path from
+      Day 1. Real `pii_redaction` enforcement (regex-based, response-side only)
+      replaces the Day-3 stub. New `tags` column on `audit_entries` (a real Alembic
+      migration) backs `aml-audit-tagging`'s pack-wide labeling.
+      **Two real protocol-level bugs found live, both would have silently broken
+      the pack if shipped as first designed:** (1) `aml-sanctions-required`
+      originally correlated on `session_id`, which turned out to be assigned
+      independently by *each* upstream server during its own handshake -- two real
+      connections through the same gateway to two different servers came back with
+      two different session IDs, confirmed by actually opening them and comparing.
+      Redesigned around `agent_id` (the `Authorization` header) instead; the
+      investigation agent's `InvestigationClient` now sends one consistent bearer
+      token across both its connections specifically so this works. (2) The
+      buffered response path assumed bare JSON; FastMCP's streamable-HTTP transport
+      actually responds SSE-framed (`text/event-stream`) for every `tools/call` --
+      every buffered call failed outright the first time this ran against a real
+      server rather than an assumption from the protocol docs. Fixed with explicit
+      SSE encode/decode helpers. A third, smaller design flaw caught before
+      shipping: `aml-sanctions-required`'s original scope (`tools: ["*"]`) would
+      have gated `get_account` itself -- but `get_account` is the *only* source of
+      the entity name `check_entity` needs, creating an unsatisfiable precondition.
+      Fixed by excluding `get_account` from the policy's scope; the investigation
+      agent's Discovery node was reordered to call `check_entity` immediately after
+      `get_account`, before any other transaction-graph call.
+      37 new tests (unit: schema/dispatch/redaction/loader-manifest coverage; 6 new
+      live integration tests driving the real pack through the real gateway + real
+      MCP servers, fixture data). 293 total tests green, `ruff` clean.
+      **Live-verified twice more, beyond the automated suite:** once confirming the
+      `agent_id` correlation fix live (two real connections, compared session IDs
+      directly), and once running the full investigation agent end-to-end with a
+      real Groq call *and* a real HITL approve cycle against the AML-pack-loaded
+      gateway -- correctly denying an out-of-order call, tagging a structuring
+      incident, holding `mark_investigated` for approval, and completing with a
+      clean 14-row audit trail, every entry correctly tagged `pack:aml`/
+      `regulation:BSA`.
+
 **Gate:** AML demo runs end-to-end (agent → 40+ tool calls → HITL hold → resume →
 investigation report); Spark job aggregates 10M synthetic records; audit verification passes.
 

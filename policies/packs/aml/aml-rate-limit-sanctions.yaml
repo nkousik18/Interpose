@@ -1,0 +1,22 @@
+# P4 (Section 9.8): rate-limits OFAC check_entity, preventing runaway agent
+# behavior -- real OFAC batch APIs have rate limits too.
+#
+# Section 9.8 asks for two thresholds (60/minute AND 500/hour). RateLimitEffect
+# only carries one (limit, window_seconds) pair; rather than extend it to hold a
+# list of thresholds -- a bigger schema change with a wider blast radius on the
+# existing rate-limit tests and every other pack that might use it -- only the
+# 60/minute threshold is expressed here. Multiple rate_limit policies on the same
+# {server, tool} already compose as AND (interpose.policies.policyset.PolicySet.evaluate
+# checks every one), so a second policy for the hourly cap could be added later
+# without touching the engine at all.
+policy: aml-rate-limit-sanctions
+description: Prevents runaway agent behavior against the sanctions-screening API.
+applies_to:
+  server: ofac-sanctions
+  tools: [check_entity]
+effect:
+  type: rate_limit
+  limit: 60
+  window_seconds: 60
+audit:
+  tag: [aml, rate-limit]
