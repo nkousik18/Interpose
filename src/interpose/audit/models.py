@@ -61,3 +61,8 @@ class AuditEntry(Base):
     hitl_reviewer: Mapped[str | None] = mapped_column(Text, nullable=True)
     hitl_decision: Mapped[str | None] = mapped_column(Text, nullable=True)
     hitl_rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Populated by tag_only/other policies' `audit.tag` values (Phase 3 Day 14, e.g.
+    # aml-audit-tagging's `pack:aml`/`regulation:BSA`) plus any response-side custom
+    # policy's own tags (e.g. aml-structuring-alert's `incident:structuring`). Empty
+    # list, not null, when nothing tagged this call.
+    tags: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default="[]")

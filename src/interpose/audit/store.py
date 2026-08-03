@@ -60,6 +60,7 @@ class AuditStore:
         hitl_reviewer: str | None = None,
         hitl_decision: str | None = None,
         hitl_rationale: str | None = None,
+        tags: list[str] | None = None,
     ) -> AuditEntry:
         fields: dict[str, Any] = {
             "trace_id": trace_id,
@@ -81,6 +82,7 @@ class AuditStore:
             "hitl_reviewer": hitl_reviewer,
             "hitl_decision": hitl_decision,
             "hitl_rationale": hitl_rationale,
+            "tags": tags or [],
         }
 
         async with self._session_factory() as session, session.begin():

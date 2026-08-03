@@ -1,0 +1,16 @@
+# P3 (Section 9.8): response-side redaction, applied broadly across the whole pack
+# (both AML servers) -- even inside an AML investigation, minimize PII exposure to
+# the agent's own reasoning context. Pattern names match
+# interpose.policies.redaction.PII_PATTERNS.
+policy: aml-pii-redaction
+description: >
+  Redacts SSN patterns, credit card numbers, and full bank routing/account number
+  combinations from tool responses before they reach the investigating agent.
+applies_to:
+  server: "*"
+  tools: ["*"]
+effect:
+  type: pii_redaction
+  patterns: [ssn, credit_card, bank_account]
+audit:
+  tag: [aml, pii-redaction]

@@ -7,11 +7,15 @@ from interpose.policies.schema import (
     AllowlistEffect,
     AppliesTo,
     AuditMeta,
+    CostCapEffect,
+    CustomEffect,
     DenylistEffect,
     HitlGateEffect,
+    PackManifest,
     PiiRedactionEffect,
     Policy,
     RateLimitEffect,
+    TagOnlyEffect,
 )
 
 
@@ -31,6 +35,11 @@ class TestAppliesTo:
     def test_rejects_unlisted_tool(self) -> None:
         applies_to = AppliesTo(server="ofac-sanctions", tools=["check_name"])
         assert not applies_to.matches("ofac-sanctions", "check_alias")
+
+    def test_wildcard_server_matches_any_server(self) -> None:
+        applies_to = AppliesTo(server="*", tools=["*"])
+        assert applies_to.matches("ofac-sanctions", "anything")
+        assert applies_to.matches("transaction-graph", "anything_else")
 
 
 class TestEffects:
@@ -74,6 +83,35 @@ class TestEffects:
     def test_hitl_gate_rejects_nonpositive_timeout(self) -> None:
         with pytest.raises(ValidationError):
             HitlGateEffect(reviewer_group="aml-analysts", timeout_seconds=0)
+
+    def test_custom_effect_defaults_to_request_stage_and_empty_params(self) -> None:
+        effect = CustomEffect(name="aml_sanctions_required")
+        assert effect.stage == "request"
+        assert effect.params == {}
+
+    def test_custom_effect_response_stage(self) -> None:
+        effect = CustomEffect(name="aml_structuring_alert", stage="response")
+        assert effect.stage == "response"
+
+    def test_custom_effect_rejects_unknown_stage(self) -> None:
+        with pytest.raises(ValidationError):
+            CustomEffect(name="x", stage="somewhere_else")
+
+    def test_tag_only_effect_type(self) -> None:
+        assert TagOnlyEffect().type == "tag_only"
+
+    def test_cost_cap_effect_fields(self) -> None:
+        effect = CostCapEffect(session_limit_usd=2.0)
+        assert effect.session_limit_usd == 2.0
+        assert effect.warn_at_ratio == 0.8
+
+    def test_cost_cap_rejects_nonpositive_limit(self) -> None:
+        with pytest.raises(ValidationError):
+            CostCapEffect(session_limit_usd=0)
+
+    def test_cost_cap_rejects_warn_ratio_above_one(self) -> None:
+        with pytest.raises(ValidationError):
+            CostCapEffect(session_limit_usd=2.0, warn_at_ratio=1.5)
 
 
 class TestAuditMeta:
@@ -163,3 +201,47 @@ class TestPolicy:
             Policy.model_validate(
                 {"policy": "no-effect", "applies_to": {"server": "x", "tools": ["*"]}}
             )
+
+    def test_parses_custom_policy(self) -> None:
+        policy = Policy.model_validate(
+            {
+                "policy": "aml-sanctions-required",
+                "applies_to": {"server": "transaction-graph", "tools": ["*"]},
+                "effect": {"type": "custom", "name": "aml_sanctions_required"},
+            }
+        )
+        assert isinstance(policy.effect, CustomEffect)
+        assert policy.effect.stage == "request"
+
+    def test_parses_tag_only_policy(self) -> None:
+        policy = Policy.model_validate(
+            {
+                "policy": "aml-audit-tagging",
+                "applies_to": {"server": "*", "tools": ["*"]},
+                "effect": {"type": "tag_only"},
+                "audit": {"tag": ["pack:aml", "regulation:BSA"]},
+            }
+        )
+        assert isinstance(policy.effect, TagOnlyEffect)
+        assert policy.audit.tag == ["pack:aml", "regulation:BSA"]
+
+
+class TestPackManifest:
+    def test_parses_a_manifest(self) -> None:
+        manifest = PackManifest.model_validate(
+            {
+                "name": "aml",
+                "version": "0.1.0",
+                "description": "FinCEN/BSA-aligned policy pack.",
+                "maintainer": "Kousik",
+                "regulation_references": ["BSA (31 U.S.C. 5311 et seq.)"],
+                "tags": ["aml", "bsa"],
+                "policies": ["aml-sanctions-required", "aml-write-hitl-gate"],
+            }
+        )
+        assert manifest.name == "aml"
+        assert manifest.policies == ["aml-sanctions-required", "aml-write-hitl-gate"]
+
+    def test_requires_policies_list(self) -> None:
+        with pytest.raises(ValidationError):
+            PackManifest.model_validate({"name": "aml", "version": "0.1.0"})

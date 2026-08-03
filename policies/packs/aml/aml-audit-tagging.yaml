@@ -1,0 +1,14 @@
+# P6 (Section 9.8): adds pack=aml, regulation=BSA tags to every audit entry
+# produced during AML pack policy evaluation -- enables filtered audit reports for
+# compliance officers. `tag_only` has no gating behavior of its own; it exists
+# purely to contribute PolicySet.static_tags for every {server, tool} pair in the
+# pack (server: "*" -- both ofac-sanctions and transaction-graph).
+policy: aml-audit-tagging
+description: Tags every AML-pack-governed call for filtered compliance reporting.
+applies_to:
+  server: "*"
+  tools: ["*"]
+effect:
+  type: tag_only
+audit:
+  tag: ["pack:aml", "regulation:BSA"]

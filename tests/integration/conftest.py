@@ -164,6 +164,50 @@ def aml_investigator_stack():
                 proc.wait(timeout=5)
 
 
+@pytest.fixture(scope="module")
+def aml_pack_investigator_stack():
+    """Same three processes as `aml_investigator_stack`, but the gateway loads the
+    real AML policy pack (`policies/packs/aml/`, Phase 3 Day 14) instead of the
+    default empty `config/policies` -- for tests that need the pack's policies to
+    actually fire, not just the two MCP servers behind an unpoliced gateway."""
+    ofac_env = {
+        **os.environ,
+        "OFAC_SDN_SOURCE": str(OFAC_FIXTURES / "sdn_sample.csv"),
+        "OFAC_ALT_SOURCE": str(OFAC_FIXTURES / "alt_sample.csv"),
+    }
+    tg_env = {
+        **os.environ,
+        "TRANSACTION_GRAPH_TRANSACTIONS_SOURCE": str(
+            TRANSACTION_GRAPH_FIXTURES / "transactions_sample.csv"
+        ),
+        "TRANSACTION_GRAPH_ACCOUNTS_SOURCE": str(
+            TRANSACTION_GRAPH_FIXTURES / "accounts_sample.csv"
+        ),
+    }
+    gateway_env = {**os.environ, "POLICY_DIR": str(REPO_ROOT / "policies" / "packs" / "aml")}
+    ofac = subprocess.Popen([sys.executable, str(OFAC_SERVER_SCRIPT)], env=ofac_env)
+    transaction_graph = subprocess.Popen(
+        [sys.executable, str(TRANSACTION_GRAPH_SERVER_SCRIPT)], env=tg_env
+    )
+    gateway = subprocess.Popen(
+        [sys.executable, "-m", "interpose.gateway"], cwd=REPO_ROOT, env=gateway_env
+    )
+    try:
+        _wait_for_port("127.0.0.1", 9002)
+        _wait_for_port("127.0.0.1", 9003)
+        _wait_for_port("127.0.0.1", 8000)
+        yield
+    finally:
+        for proc in (gateway, transaction_graph, ofac):
+            proc.terminate()
+        for proc in (gateway, transaction_graph, ofac):
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+
+
 @pytest.fixture(autouse=True)
 def clean_state():
     """Every test starts from an empty audit table and an empty HITL ticket queue.

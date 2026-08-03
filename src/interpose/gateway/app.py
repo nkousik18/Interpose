@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import json
 import logging
 import time
 import uuid
@@ -47,7 +48,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from mcp.types import ErrorData, JSONRPCError, JSONRPCMessage
 from pydantic import ValidationError
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
+# Imported for its registration side effect (interpose.policies.custom's decorators),
+# not used directly here -- so every CustomEffect.name a loaded policy pack references
+# resolves regardless of which specific pack YAML files are present in
+# `config/policies`. Additional packs would get an import line here too.
+import interpose.policies.packs.aml  # noqa: F401, E402
 from interpose.audit.chain import canonical_json
 from interpose.audit.db import create_engine, create_session_factory
 from interpose.audit.store import AuditStore
@@ -59,8 +66,15 @@ from interpose.control_plane.state import Decision as CPDecision
 from interpose.control_plane.state import DecisionEvent, PolicyResult
 from interpose.gateway.routing import RoutingTable, load_routing_table
 from interpose.observability.tracing import get_tracer, instrument_sqlalchemy_engine, setup_tracing
+from interpose.policies.custom import RequestPolicyContext, ResponsePolicyContext
 from interpose.policies.loader import load_policy_pack
-from interpose.policies.policyset import Outcome, PolicyDecision, PolicyEngine, RateLimiter
+from interpose.policies.policyset import (
+    Outcome,
+    PolicyDecision,
+    PolicyEngine,
+    PolicySet,
+    RateLimiter,
+)
 from interpose.session import hitl
 from interpose.session.redis_client import create_async_redis
 
@@ -109,6 +123,9 @@ def create_app(
         engine = create_engine(database_url or settings.database_url)
         session_factory = create_session_factory(engine)
         app.state.audit_store = AuditStore(session_factory)
+        # Needed by request-side custom policies (e.g. aml-sanctions-required) to
+        # query the audit log directly -- see interpose.policies.custom.RequestPolicyContext.
+        app.state.session_factory = session_factory
         app.state.db_engine = engine
         app.state.redis = create_async_redis(redis_url or settings.redis_url)
 
@@ -294,12 +311,23 @@ async def _handle_tool_call(
     rate_limiter: RateLimiter = request.app.state.rate_limiter
     audit_store: AuditStore = request.app.state.audit_store
     client: httpx.AsyncClient = request.app.state.http_client
+    session_factory: async_sessionmaker = request.app.state.session_factory
 
+    policy_set = policy_engine.compile(server_name, tool_name)
+    static_tags = policy_set.static_tags
+    request_context = RequestPolicyContext(
+        session_id=session_id,
+        agent_id=agent_id or "anonymous",
+        server=server_name,
+        tool=tool_name,
+        arguments=arguments,
+        session_factory=session_factory,
+    )
     with get_tracer().start_as_current_span("policy.evaluate") as span:
         span.set_attribute("interpose.server", server_name)
         span.set_attribute("interpose.tool", tool_name)
-        decision, policies_fired = _compile_and_evaluate(
-            policy_engine, rate_limiter, server_name, tool_name, agent_id, request_id
+        decision, policies_fired = await _evaluate_policy_set(
+            policy_set, rate_limiter, agent_id, request_context, request_id
         )
         span.set_attribute("interpose.decision", decision.outcome.name)
     trace_id = uuid.uuid4()
@@ -324,9 +352,10 @@ async def _handle_tool_call(
             server=server_name,
             tool=tool_name,
             args_hash=args_hash,
-            args_redacted=arguments,  # no PII redaction implemented yet (Day 3 stub)
+            args_redacted=arguments,  # never a response -- nothing to redact here
             policies_fired=policies_fired,
             decision=_decision_payload(decision),
+            tags=static_tags,
         )
         await _publish_decision_event(
             request,
@@ -355,6 +384,8 @@ async def _handle_tool_call(
             rpc_id=rpc_id,
             session_id=session_id,
             policies_fired=policies_fired,
+            policy_set=policy_set,
+            static_tags=static_tags,
             upstream_url=upstream_url,
             forward_headers=forward_headers,
             body=body,
@@ -380,6 +411,7 @@ async def _handle_tool_call(
         args_redacted=arguments,
         policies_fired=policies_fired,
         decision=_decision_payload(decision),
+        tags=static_tags,
     )
     await _publish_decision_event(
         request,
@@ -413,6 +445,9 @@ async def _handle_tool_call(
         policies_fired=policies_fired,
         decision_payload=_decision_payload(decision),
         rpc_id=rpc_id,
+        policy_set=policy_set,
+        static_tags=static_tags,
+        redis_conn=request.app.state.redis,
     )
 
 
@@ -429,6 +464,8 @@ async def _handle_hold(
     rpc_id: str | int,
     session_id: str,
     policies_fired: list[dict[str, str]],
+    policy_set: PolicySet,
+    static_tags: list[str],
     upstream_url: str,
     forward_headers: dict[str, str],
     body: bytes,
@@ -452,6 +489,7 @@ async def _handle_hold(
         args_redacted=arguments,
         policies_fired=policies_fired,
         decision=_decision_payload(decision),
+        tags=static_tags,
     )
     ticket = await hitl.create_ticket(
         redis_conn,
@@ -513,6 +551,7 @@ async def _handle_hold(
                 "reason": "hitl_timeout",
             },
             hitl_ticket_id=uuid.UUID(ticket.ticket_id),
+            tags=static_tags,
         )
         return _error_response(
             rpc_id,
@@ -549,6 +588,7 @@ async def _handle_hold(
             hitl_reviewer=resolved.decided_by,
             hitl_decision=resolved.status,
             hitl_rationale=resolved.rationale,
+            tags=static_tags,
         )
         return _error_response(
             rpc_id,
@@ -587,11 +627,22 @@ async def _handle_hold(
         policies_fired=policies_fired,
         decision_payload=_decision_payload(decision),
         rpc_id=rpc_id,
+        policy_set=policy_set,
+        static_tags=static_tags,
+        redis_conn=redis_conn,
         hitl_ticket_id=uuid.UUID(ticket.ticket_id),
         hitl_reviewer=resolved.decided_by,
         hitl_decision=resolved.status,
         hitl_rationale=resolved.rationale,
     )
+
+
+class ResponsePolicyError(Exception):
+    """Raised when Stage 8 evaluation itself fails (a redaction or response-stage
+    custom policy crashed) -- the upstream call already completed by this point, but
+    the gateway can't vouch for what it's about to hand back. Treated like an
+    upstream error from the agent's point of view: surfacing a failure is safer than
+    returning a response that skipped its own redaction/incident checks."""
 
 
 async def _forward_and_record(
@@ -614,6 +665,9 @@ async def _forward_and_record(
     policies_fired: list[dict[str, str]],
     decision_payload: dict[str, Any],
     rpc_id: str | int,
+    policy_set: PolicySet,
+    static_tags: list[str],
+    redis_conn: Any,
     hitl_ticket_id: uuid.UUID | None = None,
     hitl_reviewer: str | None = None,
     hitl_decision: str | None = None,
@@ -621,13 +675,17 @@ async def _forward_and_record(
 ) -> Response:
     """Shared by the PASS path and a HITL-approved hold: forward to upstream, then
     write the COMPLETED/UPSTREAM_ERROR audit row linked to whatever came before it
-    (an INTENT row for a plain PASS, a HELD row for an approved hold)."""
+    (an INTENT row for a plain PASS, a HELD row for an approved hold).
+
+    Only buffers and parses the response (`_forward_buffered`) when
+    `policy_set.has_response_side_policies` -- every other call (the overwhelming
+    majority, with no AML-style pack loaded) keeps the original streamed passthrough
+    (`_forward`) exactly as it worked before Phase 3 Day 14.
+    """
     start = time.monotonic()
-    try:
-        response = await _forward(client, method, upstream_url, forward_headers, body, request_id)
-    except httpx.HTTPError as exc:
-        latency_ms = int((time.monotonic() - start) * 1000)
-        logger.exception("gateway.upstream_error request_id=%s", request_id)
+    response_tags: list[str] = []
+
+    async def _write_error(reason: str, detail: str, latency_ms: int) -> None:
         await audit_store.write_entry(
             status="UPSTREAM_ERROR",
             trace_id=trace_id,
@@ -640,19 +698,52 @@ async def _forward_and_record(
             args_hash=args_hash,
             args_redacted=arguments,
             policies_fired=policies_fired,
-            decision={"outcome": "UPSTREAM_ERROR", "detail": str(exc)},
+            decision={"outcome": "UPSTREAM_ERROR", "reason": reason, "detail": detail},
             latency_ms=latency_ms,
             hitl_ticket_id=hitl_ticket_id,
             hitl_reviewer=hitl_reviewer,
             hitl_decision=hitl_decision,
             hitl_rationale=hitl_rationale,
+            tags=static_tags,
         )
+
+    try:
+        if policy_set.has_response_side_policies:
+            response, response_tags = await _forward_buffered(
+                client,
+                method,
+                upstream_url,
+                forward_headers,
+                body,
+                request_id,
+                policy_set=policy_set,
+                session_id=session_id,
+                server_name=server_name,
+                tool_name=tool_name,
+                arguments=arguments,
+                redis_conn=redis_conn,
+            )
+        else:
+            response = await _forward(
+                client, method, upstream_url, forward_headers, body, request_id
+            )
+    except httpx.HTTPError as exc:
+        logger.exception("gateway.upstream_error request_id=%s", request_id)
+        latency_ms = int((time.monotonic() - start) * 1000)
+        await _write_error("upstream_unreachable", str(exc), latency_ms)
+        return _upstream_error_response(rpc_id, exc)
+    except ResponsePolicyError as exc:
+        logger.exception("gateway.response_policy_error request_id=%s", request_id)
+        latency_ms = int((time.monotonic() - start) * 1000)
+        await _write_error("response_policy_error", str(exc), latency_ms)
         return _upstream_error_response(rpc_id, exc)
 
     latency_ms = int((time.monotonic() - start) * 1000)
-    # Latency measures time-to-response-headers, not full body consumption (see
-    # _forward) -- and for a held call, not the time spent waiting on HITL review
-    # either, which is tracked separately via the HELD/COMPLETED audit timestamps.
+    # Latency measures time-to-response-headers for the streamed path, or the full
+    # buffered round trip for the response-side-policy path -- and for a held call,
+    # never the time spent waiting on HITL review, which is tracked separately via
+    # the HELD/COMPLETED audit timestamps.
+    merged_tags = static_tags + [tag for tag in response_tags if tag not in static_tags]
     await audit_store.write_entry(
         status="COMPLETED",
         trace_id=trace_id,
@@ -671,6 +762,7 @@ async def _forward_and_record(
         hitl_reviewer=hitl_reviewer,
         hitl_decision=hitl_decision,
         hitl_rationale=hitl_rationale,
+        tags=merged_tags,
     )
     return response
 
@@ -718,24 +810,25 @@ async def _publish_decision_event(
     await event_bus.publish(event)
 
 
-def _compile_and_evaluate(
-    policy_engine: PolicyEngine,
+async def _evaluate_policy_set(
+    policy_set: PolicySet,
     rate_limiter: RateLimiter,
-    server_name: str,
-    tool_name: str,
     agent_id: str | None,
+    request_context: RequestPolicyContext,
     request_id: str,
 ) -> tuple[PolicyDecision, list[dict[str, str]]]:
     try:
-        policy_set = policy_engine.compile(server_name, tool_name)
-        decision = policy_set.evaluate(rate_limiter, subject=agent_id or "anonymous")
+        decision = await policy_set.evaluate(
+            rate_limiter, subject=agent_id or "anonymous", request_context=request_context
+        )
         policies_fired = [
             {"policy": p.policy, "effect_type": p.effect.type} for p in policy_set.policies
         ]
         return decision, policies_fired
     except Exception:
         # Fail-closed per Section 6.5: a policy engine error must never silently
-        # become a pass-through.
+        # become a pass-through -- covers an unknown custom-policy name
+        # (UnknownCustomPolicyError) exactly the same as any other engine failure.
         logger.exception("gateway.policy_engine_error request_id=%s", request_id)
         return PolicyDecision(Outcome.DENY, None, "policy_engine_error"), []
 
@@ -789,4 +882,113 @@ async def _forward(
     }
     return StreamingResponse(
         body_stream(), status_code=upstream_response.status_code, headers=response_headers
+    )
+
+
+def _decode_mcp_body(raw_body: bytes, content_type: str) -> Any:
+    """FastMCP's streamable-HTTP transport responds `text/event-stream` (SSE-framed)
+    for every `tools/call` POST -- confirmed live, not `application/json` as a naive
+    `json.loads(raw_body)` first assumed (caught immediately: every buffered call
+    failed with a JSON decode error the moment this path was actually exercised
+    against a live server rather than assumed from the protocol docs alone). A single
+    MCP response is one SSE event; `data:` lines are joined per the SSE spec before
+    parsing. Falls back to plain JSON for a body that isn't SSE-framed at all, so this
+    doesn't assume every future upstream behaves identically."""
+    if "text/event-stream" not in content_type:
+        return json.loads(raw_body)
+    text = raw_body.decode("utf-8")
+    data_lines = [
+        line[len("data:") :].lstrip() for line in text.splitlines() if line.startswith("data:")
+    ]
+    if not data_lines:
+        raise ValueError(f"no SSE 'data:' field found in response body: {text!r}")
+    return json.loads("\n".join(data_lines))
+
+
+def _encode_mcp_body(payload: Any, content_type: str) -> bytes:
+    """Inverse of `_decode_mcp_body` -- must match the same framing the original
+    response used, or the MCP client on the other end (still expecting
+    `text/event-stream`, since that's the Content-Type header this response keeps)
+    can't parse it back out."""
+    body = json.dumps(payload)
+    if "text/event-stream" not in content_type:
+        return body.encode("utf-8")
+    return f"event: message\ndata: {body}\n\n".encode()
+
+
+async def _forward_buffered(
+    client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    body: bytes,
+    request_id: str,
+    *,
+    policy_set: PolicySet,
+    session_id: str,
+    server_name: str,
+    tool_name: str,
+    arguments: dict[str, Any],
+    redis_conn: Any,
+) -> tuple[Response, list[str]]:
+    """Stage 8, buffered variant -- only used when
+    `policy_set.has_response_side_policies` (a `tools/call` response is a single,
+    bounded JSON-RPC message, never the long-lived server-push GET stream, which
+    always keeps using `_forward`'s true streaming path). Reads the full response,
+    parses the `CallToolResult` payload, runs response-side policy evaluation
+    (redaction + response-stage custom policies), and re-serializes a plain
+    (unstreamed) `Response` with whatever was, possibly, redacted.
+
+    Raises `ResponsePolicyError` if evaluation itself fails -- the caller
+    (`_forward_and_record`) treats that like an upstream error, per Section 6.5's
+    fail-closed reasoning applied to Stage 8: the upstream call already completed,
+    but this gateway can't vouch for a response that skipped its own governance.
+    """
+    req = client.build_request(method, url, headers=headers, content=body or None)
+    upstream_response = await client.send(req, stream=True)
+    try:
+        raw_body = await upstream_response.aread()
+    finally:
+        await upstream_response.aclose()
+        logger.info(
+            "gateway.egress request_id=%s status=%d", request_id, upstream_response.status_code
+        )
+
+    response_headers = {
+        k: v
+        for k, v in upstream_response.headers.items()
+        if k.lower() not in STRIP_RESPONSE_HEADERS
+    }
+
+    content_type = upstream_response.headers.get("content-type", "")
+    tags: list[str] = []
+    try:
+        parsed = _decode_mcp_body(raw_body, content_type)
+        result = parsed.get("result") if isinstance(parsed, dict) else None
+        if isinstance(result, dict):
+            response_context = ResponsePolicyContext(
+                session_id=session_id,
+                server=server_name,
+                tool=tool_name,
+                arguments=arguments,
+                response_payload=result.get("structuredContent"),
+                redis=redis_conn,
+            )
+            eval_result = await policy_set.evaluate_response(result, response_context)
+            parsed["result"] = eval_result.payload
+            tags = eval_result.tags
+            raw_body = _encode_mcp_body(parsed, content_type)
+        # A non-dict `result` (a JSON-RPC-level `error` response, or a malformed
+        # body) has nothing for a response-side policy to redact or read -- left
+        # exactly as the upstream sent it.
+    except ResponsePolicyError:
+        raise
+    except Exception as exc:
+        raise ResponsePolicyError(str(exc)) from exc
+
+    return (
+        Response(
+            content=raw_body, status_code=upstream_response.status_code, headers=response_headers
+        ),
+        tags,
     )

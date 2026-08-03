@@ -1,0 +1,30 @@
+# P1 (Section 9.8): before any transaction-graph tool call, this session must
+# already have a completed OFAC sanctions check (check_entity/check_alias)
+# somewhere in its history. Session-level, not per-account -- see
+# interpose.policies.packs.aml.aml_sanctions_required's docstring for why the
+# doc's literal "on that account" wording isn't implementable against these two
+# servers' actual tool schemas (OFAC takes a name, transaction-graph takes an
+# account_id; there's no shared key to match one against the other).
+#
+# Deliberately excludes get_account: check_entity needs the entity's *name*
+# (`AccountRecord.entity_name`), and the only way to learn that name at all is
+# get_account itself -- gating it too would create a chicken-and-egg problem
+# where the sanctions check can never happen because it needs a fact that's
+# locked behind the sanctions check. A real analyst pulls up "whose account is
+# this" before deciding whom to screen, which is exactly the order get_account
+# being ungated allows.
+policy: aml-sanctions-required
+description: >
+  Reflects a real-world compliance workflow expectation: an analyst screens an
+  account against sanctions lists before investigating its transaction activity,
+  not after.
+applies_to:
+  server: transaction-graph
+  tools: [query_transactions, neighbors, subgraph, structuring_check, mark_investigated]
+effect:
+  type: custom
+  name: aml_sanctions_required
+  stage: request
+audit:
+  severity: medium
+  tag: [aml, sanctions-precondition]
