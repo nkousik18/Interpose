@@ -1,61 +1,135 @@
 {
   "uid": "interpose-cost-telemetry",
-  "title": "Interpose — Cost Telemetry",
-  "tags": ["interpose"],
+  "title": "Interpose \u2014 Cost Telemetry",
+  "tags": [
+    "interpose"
+  ],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
-  "refresh": "30s",
-  "time": {"from": "now-24h", "to": "now"},
+  "refresh": "",
+  "time": {
+    "from": "2026-07-05T00:00:00.000Z",
+    "to": "2026-08-03T00:00:00.000Z"
+  },
   "panels": [
     {
       "id": 1,
       "type": "text",
       "title": "How to read this dashboard",
-      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "options": {
         "mode": "markdown",
-        "content": "**Dashboard 4 of 4 (Section 12.4).** LLM token spend by agent/session/tool, provider cost breakdown, projected monthly cost, sessions over threshold.\n\n**Status as of Phase 2 Day 9: schema only, no data yet.** The control plane makes real Groq calls today (Day 8: A2/A3/A4's LLM-backed narrative generation via `interpose.control_plane.llm`), but nothing records token counts or cost per call yet -- `generate_structured(...)` doesn't currently return usage data to its callers. Wiring that through, and exporting it as a metric, is a named Phase 3/4 gap, not a difference from the other three dashboards' \"doesn't exist yet\" (here the LLM calls this would measure are real; only the measurement itself is missing)."
+        "content": "**Dashboard 4 of 4 (Section 12.4). Synthetic-only, and always will be until this changes.** The real gateway has zero visibility into LLM token cost (Phase 3 Day 14's finding: an agent's LLM calls, like `agents/aml-investigator`'s Assessment/Report nodes, happen out-of-process, never through Interpose). Every number here comes from `generate_synthetic_telemetry`'s fabricated `tokens`/cost fields (~15% of rows), aggregated into `agg_cost_daily` -- illustrative volume, not real spend, not real provider pricing. Fixed 2026-07-06 to 2026-08-03 window."
       }
     },
     {
       "id": 2,
       "type": "timeseries",
-      "title": "Token spend per agent",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
-      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "title": "Token spend per agent (top 10 by cost)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "interpose-postgres"
+      },
       "targets": [
-        {"expr": "sum by (agent) (rate(interpose_llm_tokens_total[5m]))", "legendFormat": "{{agent}}"}
+        {
+          "rawSql": "WITH top_agents AS (\n            SELECT agent_id FROM agg_cost_daily\n            WHERE source = 'synthetic' AND $__timeFilter(day)\n            GROUP BY agent_id ORDER BY sum(cost_usd) DESC LIMIT 10\n        )\n        SELECT day AS time, agent_id AS metric, sum(cost_usd) AS value\n        FROM agg_cost_daily\n        WHERE source = 'synthetic' AND $__timeFilter(day)\n          AND agent_id IN (SELECT agent_id FROM top_agents)\n        GROUP BY day, agent_id\n        ORDER BY day",
+          "format": "time_series",
+          "datasource": {
+            "type": "postgres",
+            "uid": "interpose-postgres"
+          },
+          "refId": "A"
+        }
       ]
     },
     {
       "id": 3,
       "type": "timeseries",
       "title": "Cost per provider",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
-      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "interpose-postgres"
+      },
       "targets": [
-        {"expr": "sum by (provider) (rate(interpose_llm_cost_usd_total[1h]))", "legendFormat": "{{provider}}"}
+        {
+          "rawSql": "SELECT day AS time, provider AS metric, sum(cost_usd) AS value\n        FROM agg_cost_daily\n        WHERE source = 'synthetic' AND $__timeFilter(day)\n        GROUP BY day, provider\n        ORDER BY day",
+          "format": "time_series",
+          "datasource": {
+            "type": "postgres",
+            "uid": "interpose-postgres"
+          },
+          "refId": "A"
+        }
       ]
     },
     {
       "id": 4,
       "type": "stat",
-      "title": "Projected monthly cost (at current rate)",
-      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 13},
-      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "title": "Projected monthly cost (at current daily rate)",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "interpose-postgres"
+      },
       "targets": [
-        {"expr": "sum(rate(interpose_llm_cost_usd_total[1h])) * 24 * 30"}
+        {
+          "rawSql": "SELECT avg(daily_cost) * 30 AS value\n        FROM (\n            SELECT day, sum(cost_usd) AS daily_cost\n            FROM agg_cost_daily\n            WHERE source = 'synthetic' AND $__timeFilter(day)\n            GROUP BY day\n        ) per_day",
+          "format": "table",
+          "datasource": {
+            "type": "postgres",
+            "uid": "interpose-postgres"
+          },
+          "refId": "A"
+        }
       ]
     },
     {
       "id": 5,
       "type": "table",
-      "title": "Sessions exceeding cost threshold",
-      "gridPos": {"h": 6, "w": 16, "x": 8, "y": 13},
-      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "title": "Agents exceeding a $5/day illustrative cost threshold",
+      "gridPos": {
+        "h": 6,
+        "w": 16,
+        "x": 8,
+        "y": 14
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "interpose-postgres"
+      },
       "targets": [
-        {"expr": "interpose_session_cost_usd > 1"}
+        {
+          "rawSql": "SELECT day, agent_id, round(sum(cost_usd)::numeric, 4) AS cost_usd\n        FROM agg_cost_daily\n        WHERE source = 'synthetic' AND $__timeFilter(day)\n        GROUP BY day, agent_id\n        HAVING sum(cost_usd) > 5.0\n        ORDER BY cost_usd DESC",
+          "format": "table",
+          "datasource": {
+            "type": "postgres",
+            "uid": "interpose-postgres"
+          },
+          "refId": "A"
+        }
       ]
     }
   ]

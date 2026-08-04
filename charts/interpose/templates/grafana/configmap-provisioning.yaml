@@ -14,16 +14,26 @@ data:
   datasources.yaml: |
     apiVersion: 1
     datasources:
-      - name: Prometheus
-        uid: interpose-prometheus
-        type: prometheus
+      # Phase 3 Day 15: all four dashboards query Postgres directly (the Spark
+      # aggregation job's `agg_*` tables, interpose.analytics.aggregate_telemetry)
+      # rather than Prometheus -- there's no Prometheus deployed anywhere in this
+      # chart, and nothing exports `/metrics` for one to scrape (Section 11.5's
+      # PodMonitor + Prometheus operator remain a named, deferred gap). Section
+      # 10.6's own design is Postgres-centric for exactly this data (Spark writes
+      # aggregate tables, not metrics), so this isn't a workaround -- it's the
+      # documented data flow. See concepts/32-synthetic-telemetry-and-postgres-backed-dashboards.md .
+      - name: Postgres
+        uid: interpose-postgres
+        type: postgres
         access: proxy
-        # Placeholder -- no Prometheus is deployed by this chart yet (Section 11.5's
-        # PodMonitor + Prometheus operator are a named, deferred Day 9 gap: nothing
-        # exports metrics for it to scrape yet either). Provisioning a datasource that
-        # points nowhere is harmless -- Grafana starts fine regardless, panels just
-        # show a connection error until Phase 3/4 wires up the real thing at this URL.
-        url: http://{{ include "interpose.fullname" . }}-prometheus.{{ .Release.Namespace }}.svc.cluster.local:9090
+        url: "{{ include "interpose.postgresHost" . }}:{{ include "interpose.postgresPort" . }}"
+        database: {{ .Values.postgres.database }}
+        user: {{ .Values.postgres.user }}
+        secureJsonData:
+          password: {{ .Values.postgres.password | quote }}
+        jsonData:
+          sslmode: disable
+          postgresVersion: 1600
         isDefault: true
         editable: false
   dashboards.yaml: |

@@ -42,6 +42,10 @@ dev = [
 ]
 analytics = [
     "pyspark>=4.2.0",
+    # Reads the synthetic-telemetry Parquet for the plain-Python COPY loader
+    # (interpose.analytics.load_synthetic_telemetry) -- not used by any Spark job
+    # itself; Spark writes Parquet directly, no pyarrow needed for that half.
+    "pyarrow>=17.0",
 ]
 # Dependencies only the demo MCP servers under mcp-servers/ need -- isolated the same
 # way as `analytics`, since a bare gateway install has no use for them (Section
