@@ -406,8 +406,77 @@ job, populated Grafana dashboards.
       clean 14-row audit trail, every entry correctly tagged `pack:aml`/
       `regulation:BSA`.
 
+- [x] Day 15 — Spark analytics + demo end-to-end. Synthetic telemetry generator
+      (`interpose.analytics.generate_synthetic_telemetry`): 10,004,966 rows, 500
+      agents, 100 tools across 20 servers (2 real -- `ofac-sanctions`,
+      `transaction-graph` -- for Dashboard 3 continuity, 18 generic), 4-week fixed
+      window with a real diurnal cycle + weekend dip (built from each hour's target
+      row count, exploded directly -- no join against the full 10M rows, which a
+      naive weighted-sample join would have forced into a broadcast nested-loop
+      join), 3 incident windows, 1 coordinated-attack simulation. Generated in
+      under a minute. Loaded into a new `audit_entries_synthetic` table (schema
+      mirror of `audit_entries`, unchained placeholder hashes) via a plain
+      `pyarrow` + `COPY` loader, not Spark JDBC -- tried JDBC first
+      (`spark.jars.packages`), Ivy resolution silently found nothing despite real
+      internet access being confirmed, and this project has no other Spark-to-
+      Postgres precedent anyway (the audit store itself writes via SQLAlchemy).
+      ~3.5 minutes to load.
+      Aggregation job (`interpose.analytics.aggregate_telemetry`): reads the
+      synthetic Parquet directly (same JDBC-avoidance reasoning), produces 5
+      dashboard-ready Postgres tables (`agg_telemetry_hourly`,
+      `agg_policy_fires_daily`, `agg_hitl_daily`, `agg_aml_pack_daily`,
+      `agg_cost_daily`) in ~5 minutes. Deliberately scoped to synthetic data only,
+      not parameterized to also aggregate real `audit_entries` -- Section 10.6's
+      own reasoning for generating synthetic telemetry ("a few weeks of MVP
+      development won't accumulate 10M real calls") is exactly why a Spark-*scale*
+      job's value is demonstrated against the synthetic corpus; real audit
+      volume is small enough for Section 12.5's saved compliance queries directly.
+      **All four Grafana dashboards rebuilt on a Postgres datasource, not
+      Prometheus** -- a real architecture question resolved before any panel got
+      touched: no Prometheus is deployed anywhere in this project, nothing exports
+      `/metrics`, and Section 10.6's own design for this exact data is
+      Postgres-centric anyway. User's explicit choice, when asked, to approximate
+      even Dashboard 1 (Gateway Health) from the audit log's own columns rather
+      than leave it as a Prometheus-shaped stub. New Grafana Postgres datasource
+      provisioning in the Helm chart.
+      **Two real aggregation bugs caught by checking row counts, not assumed
+      correct:** `agg_cost_daily` grouped by `{day, agent_id, tool, provider}`
+      first and produced 918,819 rows (most combinations appearing a handful of
+      times) -- fixed by dropping `tool` from the grouping, matching what
+      Section 12.4's panels actually ask for. `agg_aml_pack_daily`'s
+      `mark_investigated_pending` column double-counted with `_approved` (it
+      summed *every* `COMPLETED` row, which includes the HITL-approved ones) --
+      renamed to `mark_investigated_auto_passed` and fixed to require
+      `hitl_decision IS NULL`, with the real-vs-synthetic behavior difference
+      documented (the real pack's `aml-write-hitl-gate` makes this bucket
+      impossible for real traffic).
+      `interpose demo aml --setup`/`--run` wired into the Typer CLI (Section
+      9.10) -- shells out to the existing `scripts/dev-up.sh` and
+      `agents/aml-investigator/run_investigation.py` rather than reimplementing
+      either, then runs the same chain-verification `verify-audit` already does.
+      10 new CLI unit tests (subprocess/audit-query mocked, matching how this
+      project already avoids spinning up a real kind cluster or Postgres in unit
+      tests) plus 2 for the loader's one pure-Python helper; the Spark jobs
+      themselves have no unit tests, matching `subsample_aml.py`'s own precedent
+      (verified live instead). 305 total tests green, `ruff`/`helm lint`/
+      `helm template` all clean.
+      **Live-verified beyond the automated suite:** a real Grafana container
+      (temporary, provisioned with the actual chart's datasource/dashboard
+      config) confirmed the Postgres datasource connects and every panel's SQL
+      returns real, correctly-shaped data -- not just that the queries parse.
+      `interpose demo aml --run` executed for real against the AML-pack-loaded
+      gateway with a real Groq call and a real HITL approve cycle, producing a
+      14-row, chain-verified audit trail and the correct CLI output sequence.
+      **Named gap, not attempted today:** the video recording draft (Day 15's
+      last bullet) is a human screen-capture deliverable, not something to
+      generate -- left for the user.
+
 **Gate:** AML demo runs end-to-end (agent → 40+ tool calls → HITL hold → resume →
 investigation report); Spark job aggregates 10M synthetic records; audit verification passes.
+**Status:** met. `interpose demo aml --run` drives the investigation agent through a
+real HITL cycle and ends with a verified audit trail; the Spark aggregation job
+processes 10,004,966 synthetic records into Grafana-ready tables. **Phase 3 is
+complete.**
 
 ## Phase 4 — Proof & Polish
 

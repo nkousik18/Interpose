@@ -1,73 +1,151 @@
 {
   "uid": "interpose-aml-pack",
-  "title": "Interpose — AML Pack (demo)",
-  "tags": ["interpose", "aml"],
+  "title": "Interpose \u2014 AML Pack (demo)",
+  "tags": [
+    "interpose"
+  ],
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
-  "refresh": "30s",
-  "time": {"from": "now-24h", "to": "now"},
+  "refresh": "",
+  "time": {
+    "from": "2026-07-05T00:00:00.000Z",
+    "to": "2026-08-03T00:00:00.000Z"
+  },
   "panels": [
     {
       "id": 1,
       "type": "text",
       "title": "How to read this dashboard",
-      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "options": {
         "mode": "markdown",
-        "content": "**Dashboard 3 of 4 (Section 12.4).** Demo-specific: OFAC sanctions-check volume, transaction-graph query patterns, structuring alerts, and `mark_investigated` outcome mix.\n\n**Status as of Phase 2 Day 9: schema only, no data at all yet.** This dashboard's entire subject matter -- the OFAC MCP server and transaction-graph MCP server -- doesn't exist until Phase 3 (Days 11-12). Shipped now purely as the intended shape; every panel here is inert until the AML pack is built."
+        "content": "**Dashboard 3 of 4 (Section 12.4).** AML-pack-specific activity: `ofac-sanctions` + `transaction-graph` only (Phase 3 Days 11-14).\n\nBacked by `agg_aml_pack_daily`. `sanctions_matches` is an illustrative ~35% placeholder rate, not a measured confidence score -- no real match-confidence field exists on synthetic rows the way Day 11's real rapidfuzz score does. Fixed 2026-07-06 to 2026-08-03 window, same as every other dashboard here."
       }
     },
     {
       "id": 2,
       "type": "timeseries",
-      "title": "OFAC call volume + sanctions match rate",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
-      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "title": "OFAC call volume + illustrative sanctions match rate",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "interpose-postgres"
+      },
       "targets": [
-        {"expr": "sum(rate(interpose_ofac_calls_total[5m]))", "legendFormat": "calls/s"},
-        {"expr": "sum(rate(interpose_ofac_matches_total[5m])) / sum(rate(interpose_ofac_calls_total[5m]))", "legendFormat": "match rate"}
+        {
+          "rawSql": "SELECT day AS time, 'OFAC calls' AS metric, ofac_calls AS value\n        FROM agg_aml_pack_daily WHERE source = 'synthetic' AND $__timeFilter(day)\n        UNION ALL\n        SELECT day, 'Sanctions matches (illustrative)', sanctions_matches\n        FROM agg_aml_pack_daily WHERE source = 'synthetic' AND $__timeFilter(day)\n        ORDER BY time",
+          "format": "time_series",
+          "datasource": {
+            "type": "postgres",
+            "uid": "interpose-postgres"
+          },
+          "refId": "A"
+        }
       ]
     },
     {
       "id": 3,
       "type": "timeseries",
-      "title": "Transaction-graph query patterns",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
-      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "title": "Transaction-graph query volume",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "interpose-postgres"
+      },
       "targets": [
-        {"expr": "sum by (query_type) (rate(interpose_txgraph_queries_total[5m]))", "legendFormat": "{{query_type}}"}
+        {
+          "rawSql": "SELECT day AS time, transaction_graph_calls AS value\n        FROM agg_aml_pack_daily\n        WHERE source = 'synthetic' AND $__timeFilter(day)\n        ORDER BY day",
+          "format": "time_series",
+          "datasource": {
+            "type": "postgres",
+            "uid": "interpose-postgres"
+          },
+          "refId": "A"
+        }
       ]
     },
     {
       "id": 4,
       "type": "stat",
-      "title": "Structuring alerts",
-      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 13},
-      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "title": "Structuring alerts (aml-structuring-alert fires)",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 13
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "interpose-postgres"
+      },
       "targets": [
-        {"expr": "sum(increase(interpose_structuring_alerts_total[24h]))"}
+        {
+          "rawSql": "SELECT sum(structuring_alerts) AS value\n        FROM agg_aml_pack_daily\n        WHERE source = 'synthetic' AND $__timeFilter(day)",
+          "format": "table",
+          "datasource": {
+            "type": "postgres",
+            "uid": "interpose-postgres"
+          },
+          "refId": "A"
+        }
       ]
     },
     {
       "id": 5,
       "type": "piechart",
-      "title": "mark_investigated: denied / HITL-approved / auto-approved",
-      "gridPos": {"h": 6, "w": 8, "x": 8, "y": 13},
-      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
+      "title": "mark_investigated: denied / HITL-approved / auto-passed",
+      "gridPos": {
+        "h": 6,
+        "w": 16,
+        "x": 8,
+        "y": 13
+      },
+      "datasource": {
+        "type": "postgres",
+        "uid": "interpose-postgres"
+      },
       "targets": [
-        {"expr": "sum by (outcome) (interpose_mark_investigated_total)", "legendFormat": "{{outcome}}"}
+        {
+          "rawSql": "SELECT 'Denied' AS metric, sum(mark_investigated_denied) AS value\n        FROM agg_aml_pack_daily WHERE source = 'synthetic' AND $__timeFilter(day)\n        UNION ALL\n        SELECT 'HITL-approved', sum(mark_investigated_approved)\n        FROM agg_aml_pack_daily WHERE source = 'synthetic' AND $__timeFilter(day)\n        UNION ALL\n        SELECT 'Auto-passed (synthetic-only, see how-to-read)', sum(mark_investigated_auto_passed)\n        FROM agg_aml_pack_daily WHERE source = 'synthetic' AND $__timeFilter(day)",
+          "format": "table",
+          "datasource": {
+            "type": "postgres",
+            "uid": "interpose-postgres"
+          },
+          "refId": "A"
+        }
       ]
     },
     {
       "id": 6,
-      "type": "histogram",
+      "type": "text",
       "title": "Session-level risk score distribution",
-      "gridPos": {"h": 6, "w": 8, "x": 16, "y": 13},
-      "datasource": {"type": "prometheus", "uid": "interpose-prometheus"},
-      "targets": [
-        {"expr": "interpose_session_risk_score"}
-      ]
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 19
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Named gap, not populated.** Agent A1's live session risk score (`interpose.control_plane.agents.policy_evaluator`) is written to an ephemeral Redis hash (`interpose:session:{id}`), not persisted anywhere historical -- there's nothing for `aggregate_telemetry` to read a distribution from. Persisting a risk-score snapshot per decision (not just the live Redis value) would be needed before this panel could show real data; named here rather than faked."
+      }
     }
   ]
 }

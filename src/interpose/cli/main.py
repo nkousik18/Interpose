@@ -1,11 +1,14 @@
-"""The `interpose` CLI: `verify-audit` (Section 6.7 / G3) and `review` (Section 6.8 /
-Phase 2 Day 6 -- list/approve/deny pending HITL tickets).
+"""The `interpose` CLI: `verify-audit` (Section 6.7 / G3), `review` (Section 6.8 /
+Phase 2 Day 6 -- list/approve/deny pending HITL tickets), and `demo aml` (Section
+9.10, Phase 3 Day 15 -- the scripted end-to-end AML demo).
 
 Run with:
   `uv run interpose verify-audit [--since YYYY-MM-DD]`
   `uv run interpose review list`
   `uv run interpose review approve <ticket-id> --reviewer NAME --rationale "..."`
   `uv run interpose review deny <ticket-id> --reviewer NAME --rationale "..."`
+  `uv run interpose demo aml --setup`
+  `uv run interpose demo aml --run`
 """
 
 from __future__ import annotations
@@ -14,10 +17,10 @@ from datetime import UTC, date, datetime
 from typing import Annotated
 
 import typer
-from sqlalchemy import create_engine, select
 
 from interpose.audit.chain import verify_chain
-from interpose.audit.models import AuditEntry
+from interpose.cli._audit_query import fetch_all_entries
+from interpose.cli.demo import demo_app
 from interpose.config import get_settings
 from interpose.session import hitl
 from interpose.session.redis_client import create_sync_redis
@@ -25,6 +28,7 @@ from interpose.session.redis_client import create_sync_redis
 app = typer.Typer(add_completion=False, help="Interpose: audit and policy gateway for MCP.")
 review_app = typer.Typer(add_completion=False, help="List and decide pending HITL tickets.")
 app.add_typer(review_app, name="review")
+app.add_typer(demo_app, name="demo")
 
 
 @app.callback()
@@ -36,19 +40,6 @@ def _callback() -> None:
     (`interpose --since ...` instead of `interpose verify-audit --since ...`). Harmless
     to leave now that there are two command groups regardless.
     """
-
-
-def _fetch_all_entries(database_url: str) -> list[dict]:
-    """Every audit entry, ordered by id (= chain order). Not filtered by date here --
-    see verify_audit's docstring for why the whole chain always gets verified."""
-    engine = create_engine(database_url)
-    try:
-        with engine.connect() as conn:
-            rows = conn.execute(select(AuditEntry).order_by(AuditEntry.id)).all()
-            columns = [c.name for c in AuditEntry.__table__.columns]
-            return [dict(zip(columns, row, strict=True)) for row in rows]
-    finally:
-        engine.dispose()
 
 
 @app.command("verify-audit")
@@ -74,7 +65,7 @@ def verify_audit(
             typer.echo(f"invalid --since value {since!r}, expected YYYY-MM-DD: {exc}")
             raise typer.Exit(code=2) from exc
 
-    entries = _fetch_all_entries(get_settings().database_url)
+    entries = fetch_all_entries(get_settings().database_url)
 
     if not entries:
         typer.echo("No audit entries found.")
