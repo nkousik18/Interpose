@@ -1,0 +1,29 @@
+# AML/BSA policy pack manifest (docs/INTERPOSE_SCOPING.md Section 9.8, Phase 3 Day 14).
+# interpose.policies.loader.load_policy_pack cross-checks `policies` below against
+# what's actually in this directory (every *.yaml file except this one) -- a manifest
+# that drifts from its own directory silently is worse than no manifest at all.
+#
+# 6 active policies, not Section 9.8's 7 -- P7 (aml-cost-cap) is deliberately NOT
+# an active file here. interpose.policies.schema.CostCapEffect's evaluator raises
+# NotImplementedError unconditionally whenever a cost_cap policy is present in an
+# applicable PolicySet (there's no real enforcement to fall back to -- the gateway
+# has no LLM-cost visibility at all). Since this pack's other policies are scoped
+# with `server: "*"` on purpose (aml-pii-redaction, aml-audit-tagging), a cost_cap
+# policy active alongside them would make every single AML-pack-governed call raise,
+# not just the ones that should. See README.md's "P7" section.
+name: aml
+version: 0.1.0
+description: FinCEN/BSA-aligned policy pack for agentic AML investigations.
+maintainer: Kousik
+regulation_references:
+  - BSA (31 U.S.C. Section 5311 et seq.)
+  - FinCEN 2026 SAR filing guidance
+  - OFAC SDN list (public)
+tags: [aml, bsa, fincen, financial-crime]
+policies:
+  - aml-sanctions-required
+  - aml-write-hitl-gate
+  - aml-pii-redaction
+  - aml-rate-limit-sanctions
+  - aml-structuring-alert
+  - aml-audit-tagging

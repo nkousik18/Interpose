@@ -1,0 +1,95 @@
+# Real Phase 3 AML MCP server, deployed the same way hello-echo.yaml and
+# ofac-sanctions.yaml are (see hello-echo.yaml's header for the full reasoning).
+#
+# Unlike ofac-sanctions, this server has a real host data dependency: the ~150MB
+# subsampled IBM AML Parquet dataset (data/README.md) is never baked into the image
+# or committed to the repo -- it's mounted in from the host. kind.yaml's
+# `extraMounts` (rendered with `envsubst`, see scripts/dev-up.sh) expose
+# $IBM_AML_DATA_DIR at /data/ibm-aml on every node's filesystem; the hostPath volume
+# below then mounts that node path into the pod, matching the containerPath kind.yaml
+# already put it at.
+#
+# Image: built + `kind load docker-image`'d by scripts/dev-up.sh from
+# mcp-servers/transaction-graph/Dockerfile. Namespace must already exist
+# (scripts/dev-up.sh creates it before applying this).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: transaction-graph
+  namespace: interpose-system
+  labels:
+    app.kubernetes.io/name: transaction-graph
+    app.kubernetes.io/component: dev-mcp-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: transaction-graph
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: transaction-graph
+        app.kubernetes.io/component: dev-mcp-server
+    spec:
+      # Kubernetes injects Docker-links-style env vars for every Service in the
+      # namespace into every pod (<SVCNAME>_PORT=tcp://<clusterIP>:<port>, etc.) --
+      # this Service's own name happens to collide exactly with this app's
+      # TRANSACTION_GRAPH_ env prefix, so TRANSACTION_GRAPH_PORT gets overwritten with
+      # a URL instead of an int, and pydantic-settings fails to parse it. Found for
+      # real: this crashed the pod in a CrashLoopBackOff on first deploy. This app
+      # gets its config from explicit env vars in this manifest, not service
+      # discovery, so there's no reason to want the injection at all.
+      enableServiceLinks: false
+      containers:
+        - name: transaction-graph
+          image: transaction-graph:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: TRANSACTION_GRAPH_TRANSACTIONS_SOURCE
+              value: /data/ibm-aml/transactions
+            - name: TRANSACTION_GRAPH_ACCOUNTS_SOURCE
+              value: /data/ibm-aml/accounts
+          ports:
+            - name: mcp
+              containerPort: 9003
+          readinessProbe:
+            tcpSocket:
+              port: 9003
+            # Longer than hello-echo's: this server loads DuckDB views over ~150MB
+            # of Parquet from the mounted host data before it's ready to serve.
+            initialDelaySeconds: 5
+            periodSeconds: 3
+            failureThreshold: 10
+          volumeMounts:
+            - name: ibm-aml-data
+              mountPath: /data/ibm-aml
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: ibm-aml-data
+          hostPath:
+            path: /data/ibm-aml
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: transaction-graph
+  namespace: interpose-system
+  labels:
+    app.kubernetes.io/name: transaction-graph
+    app.kubernetes.io/component: dev-mcp-server
+spec:
+  selector:
+    app.kubernetes.io/name: transaction-graph
+    app.kubernetes.io/component: dev-mcp-server
+  ports:
+    - name: mcp
+      port: 9003
+      targetPort: 9003

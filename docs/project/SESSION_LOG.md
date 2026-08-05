@@ -10,6 +10,146 @@ Newest entry first. One entry per work session (not necessarily per calendar day
 
 ---
 
+## 2026-08-04 (cont'd) — Closing Phase 3's named gaps, part 1: both AML MCP servers real and enforced in-cluster
+
+**What happened:**
+- Scoped all three named gaps left open by Day 15 (no Prometheus/`/metrics`, AML MCP
+  servers not deployed in-cluster, control-plane anomaly/incident/risk-score not
+  persisted) and agreed an order: AML in-cluster first (smallest, unblocks realistic
+  Phase 4 adversarial testing), then control-plane persistence, then Prometheus --
+  with Prometheus done now against `kind` rather than deferred to Phase 4's EKS work,
+  since the OTel Collector + PodMonitor shape is the same either way.
+- Deployed `ofac-sanctions` in-cluster (`dev/mcp-servers/ofac-sanctions.yaml`, direct
+  copy of the `hello-echo.yaml` Deployment+Service pattern -- no host data dependency,
+  it fetches live Treasury SDN/alt lists on pod start). Wired into
+  `values-dev.yaml`'s `upstreams.servers`, `scripts/dev-up.sh`'s build/load/wait
+  steps, `dev/mcp-servers/README.md`.
+- Deployed `transaction-graph` in-cluster (`dev/mcp-servers/transaction-graph.yaml`),
+  the real blocker: its ~150MB subsampled IBM AML Parquet dataset lives on the host,
+  bind-mounted at `docker run` time locally, and a `kind` pod can't see the host
+  filesystem without help. Added `kind.yaml` `extraMounts` on both worker nodes
+  (not the control-plane node, which carries kind's default NoSchedule taint), driven
+  by `$IBM_AML_DATA_DIR` (default `~/.interpose/data/ibm-aml`) -- rendered into the
+  actual cluster config with `envsubst` before `kind create cluster --config -`,
+  since a real absolute host path can't be safely hardcoded into a file committed to
+  git. `dev-up.sh` now validates the directory exists before creating the cluster.
+- **Real bug, not a fluke, caught by watching the pod actually crash-loop:**
+  Kubernetes injects Docker-links-style env vars for every Service in a namespace
+  into every pod (`<SVCNAME>_PORT=tcp://<clusterIP>:<port>`, etc.). The
+  `transaction-graph` Service's own name happens to map exactly to that app's
+  `TRANSACTION_GRAPH_` pydantic-settings env prefix, so Kubernetes silently
+  overwrote `TRANSACTION_GRAPH_PORT` (meant to be an int) with a URL, and the
+  container crashed on every start with a `pydantic_core.ValidationError`. Fixed
+  with `enableServiceLinks: false` on all three dev fixture Deployments (added
+  defensively to `hello-echo.yaml`/`ofac-sanctions.yaml` too, not just the one that
+  actually hit it -- more services are joining this namespace in Gap 3/4's work).
+- **Second real gap, found while trying to prove the AML pack was enforced
+  in-cluster, not one of the three originally scoped:** the chart's policy
+  ConfigMap (`configmap-policies.yaml`) only ever globbed
+  `charts/interpose/files/policies/*.yaml` -- the Day 9/10 hello-echo demo pack.
+  `policies/packs/aml/` was never wired into the chart at all, so a kind-deployed
+  gateway could route to the real AML servers but had no AML policy enforcing
+  anything on them. Asked the user; chose to close it now rather than defer.
+  Fixed with a `policies.pack` values.yaml toggle (`hello-echo` default, `aml`
+  opt-in via `--set` or `scripts/dev-up.sh`'s new `POLICY_PACK` env var), backed by
+  a checked-in copy of the real pack at `charts/interpose/files/policies-aml/`
+  (renamed the old directory to `files/policies-hello-echo/` to match) -- Helm's
+  `.Files.Glob` can't read outside the chart directory, so this can't be a symlink
+  or a live reference. Added `tests/unit/policies/test_chart_policy_sync.py` to
+  catch drift between both chart copies and their real sources
+  (`config/policies/`, `policies/packs/aml/`) -- nothing was catching this before.
+- **Third real bug, found live-verifying the second fix:** setting
+  `policies.pack=aml` and running `helm upgrade --wait` reported success, but the
+  running gateway pod kept serving the *old* ConfigMap indefinitely -- Kubernetes
+  never restarts a pod just because a ConfigMap it mounts changed, and this
+  Deployment had no mechanism forcing one. Fixed with `checksum/config`,
+  `checksum/policies`, `checksum/upstreams` annotations on the pod template
+  (hashing each ConfigMap's rendered content) -- a real, general correctness fix
+  that also covers `config/upstreams.yaml` changes, not just this demo's.
+- Updated `interpose demo aml --setup`'s CLI text (`src/interpose/cli/demo.py`) to
+  match reality and pass `POLICY_PACK=aml` through to `dev-up.sh` automatically.
+  Updated `mcp-servers/transaction-graph/README.md`,
+  `concepts/26-helm-and-the-interpose-chart.md`, and
+  `charts/interpose/README.md` (install snippet, chart contents, "not deployed by
+  this chart" section) to stop describing the old single-server, single-pack state.
+- **Live-verified extensively, not just unit-tested:** a real `kind` cluster with
+  all three MCP servers running; a real MCP client round-trip through the gateway
+  to `ofac-sanctions` (matched a real SDN entry, IRGC, 100% score) and to
+  `transaction-graph` (`get_account` on a real subsampled account, confirmed the
+  hostPath mount actually exposes host data inside the pod); a real
+  `aml-sanctions-required` denial when calling `transaction-graph` before an OFAC
+  check, then a real `aml-write-hitl-gate` hold on `mark_investigated`, approved by
+  a concurrent task simulating a reviewer, completing successfully; and a full
+  `interpose demo aml --run` against the in-cluster gateway with a real Groq call,
+  producing a genuine high-risk sanctions-match investigation with a real narrative
+  and a real HITL-approved escalation write. Queried the cluster's own Postgres
+  directly afterward: 27 real audit entries, correct tags (`pack:aml`,
+  `regulation:BSA`, `sanctions-precondition`, `hitl`, `pii-redaction`), correct
+  HOLD/PASS outcomes. Full local test suite still green throughout (307 passed, up
+  from 305 -- the two new sync-check tests), `ruff` clean.
+
+**Decisions made:**
+- Prometheus/metrics (the third named gap) will be done now against `kind`, not
+  deferred to Phase 4's EKS work -- user's explicit choice, since standing up an
+  OTel Collector + Prometheus is the same shape either way and doing it once now
+  means Dashboard 1 is real before Phase 4 starts.
+- The newly-found AML-pack-not-wired-into-the-chart gap was closed immediately
+  rather than left as a fourth deferred item -- user's explicit choice, reasoning
+  being it directly blocks a genuine in-cluster AML demo, the actual point of
+  closing the other two gaps.
+- `policies.pack` defaults to `hello-echo`, not `aml` -- keeps the Day 9/10 baseline
+  behavior of a bare `dev-up.sh` run unchanged; the AML pack is opt-in via
+  `POLICY_PACK=aml` (which `interpose demo aml --setup` now sets automatically).
+
+**Current state:**
+- Two of Phase 3's three named gaps are closed and live-verified: both AML MCP
+  servers are real, working, policy-enforced in-cluster deployments, not local
+  subprocesses-only. A fourth, previously-unflagged gap (AML pack not wired into
+  the chart) was found and closed in the same session.
+- The `kind` cluster (`interpose-dev`) is currently up, with `policies.pack=aml`
+  installed (via a manual `helm upgrade --set policies.pack=aml`, not yet re-run
+  through a fresh `dev-up.sh` with `POLICY_PACK=aml` -- functionally identical, just
+  noting the exact path taken). Left running rather than torn down, to avoid
+  re-paying the ~2-3 minute rebuild cost before tomorrow's session. Two
+  `kubectl port-forward`s are active in the background: gateway on `:8000`, kind's
+  own Redis on `:6380` (not `:6379` -- that port is `docker-compose`'s Redis,
+  needed simultaneously for the local pytest suite against the bare/local stack).
+- One known, minor, deliberately-not-fixed limitation: `interpose demo aml --run`'s
+  final audit-chain-verification step reads `DATABASE_URL` from local
+  `Settings` (the `docker-compose` Postgres), so it reports "No audit entries
+  found" when `--gateway-url` points at the kind cluster's own gateway/Postgres
+  instead of a co-located bare gateway. The investigation and audit trail
+  themselves are genuinely correct in that case (verified directly via `psql`
+  against the cluster's Postgres above) -- only the CLI's own verification step is
+  looking at the wrong database. A `--database-url` option would fix it; flagged,
+  not built, since it's outside today's three scoped gaps.
+
+**Next steps:**
+1. Control-plane anomaly/incident/risk-score persistence (the second gap in the
+   agreed order): new tables (`anomaly_flags`, `incidents`, a risk-score history
+   table) sharing `audit.models.Base`, written synchronously inside
+   `anomaly_detector.py`, `incident_escalator.py`, and `policy_evaluator.py`'s node
+   closures where results are currently discarded; an Alembic migration; swap
+   Dashboard 2/3's two literal "named gap" text panels for real SQL panels.
+2. Prometheus/metrics (the third, agreed to happen now, not deferred to Phase 4):
+   OTel Meter-based counters/histograms for the 5 named metrics (scoping Section
+   12.3) in the gateway, a new OTel Collector in the chart (OTLP receiver +
+   Prometheus exporter), Prometheus itself (or a `PodMonitor`) in-cluster, a second
+   Grafana datasource, Dashboard 1 rewired off its Postgres approximation.
+3. Then reassess Phase 4 (adversarial test suite, Terraform/EKS, blog posts, demo
+   video, v0.1.0) with all of Phase 3's named gaps actually closed.
+
+**Loose ends / reminders:**
+- `interpose demo aml --run`'s audit-verification DB mismatch against a remote
+  gateway (see "Current state" above) -- not urgent, but worth a `--database-url`
+  option eventually.
+- The `kind` cluster is currently up with manual port-forwards running (`:8000`
+  gateway, `:6380` kind-Redis) rather than through `dev-up.sh`'s own managed
+  port-forward + PID-file mechanism -- tomorrow's session should either reuse these
+  or restart cleanly via `scripts/dev-down.sh && scripts/dev-up.sh`.
+
+---
+
 ## 2026-08-04 — Phase 3 Day 15: Spark analytics, Postgres-backed dashboards — Phase 3 complete
 
 **What happened:**

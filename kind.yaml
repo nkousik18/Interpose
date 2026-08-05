@@ -4,10 +4,26 @@
 # actually uses anti-affinity/node-selection yet (single replica everywhere per Day 9's
 # scope) -- this just makes the cluster shape honest about what a "real" deploy target
 # looks like, and ready for that once replicaCount > 1 is actually exercised.
+# extraMounts on both workers (not the control-plane node, which carries kind's
+# default NoSchedule taint and never runs workload pods) expose the host's IBM AML
+# subsample directory inside every node's filesystem, so the transaction-graph pod
+# can hostPath-mount it regardless of which worker it's scheduled onto
+# (dev/mcp-servers/transaction-graph.yaml). ${IBM_AML_DATA_DIR} is a template
+# placeholder, not literal YAML -- this file must be rendered with `envsubst` before
+# `kind create cluster --config -` (see scripts/dev-up.sh), since a real absolute host
+# path can't be safely hardcoded into a file committed to git.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: interpose-dev
 nodes:
   - role: control-plane
   - role: worker
+    extraMounts:
+      - hostPath: ${IBM_AML_DATA_DIR}
+        containerPath: /data/ibm-aml
+        readOnly: true
   - role: worker
+    extraMounts:
+      - hostPath: ${IBM_AML_DATA_DIR}
+        containerPath: /data/ibm-aml
+        readOnly: true

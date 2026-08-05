@@ -28,6 +28,10 @@ spec:
         app.kubernetes.io/name: hello-echo
         app.kubernetes.io/component: dev-mcp-server
     spec:
+      # Disabled defensively, not because this app has hit the collision -- see
+      # transaction-graph.yaml's comment for the real bug this class of Kubernetes
+      # env-var injection caused there. This app doesn't use service discovery either.
+      enableServiceLinks: false
       containers:
         - name: hello-echo
           image: hello-echo:dev

@@ -13,16 +13,20 @@
 secrets:
   createDev: true
 
-# Routes /mcp/hello-echo at the gateway to the dev fixture MCP server
-# (dev/mcp-servers/hello-echo.yaml), applied separately by scripts/dev-up.sh -- not
-# part of this chart, see dev/mcp-servers/README.md. Cross-namespace-safe Service DNS
-# name (<service>.<namespace>.svc.cluster.local) rather than the short "hello-echo"
-# name, since a values file shouldn't assume it's installed into the same namespace
-# the fixture happens to use today.
+# Routes /mcp/{name} at the gateway to the dev fixture MCP servers
+# (dev/mcp-servers/*.yaml), applied separately by scripts/dev-up.sh -- not part of
+# this chart, see dev/mcp-servers/README.md. Cross-namespace-safe Service DNS names
+# (<service>.<namespace>.svc.cluster.local) rather than short names, since a values
+# file shouldn't assume it's installed into the same namespace the fixtures happen to
+# use today.
 upstreams:
   servers:
     hello-echo:
       url: "http://hello-echo.interpose-system.svc.cluster.local:9001/mcp"
+    ofac-sanctions:
+      url: "http://ofac-sanctions.interpose-system.svc.cluster.local:9002/mcp"
+    transaction-graph:
+      url: "http://transaction-graph.interpose-system.svc.cluster.local:9003/mcp"
 
 grafana:
   # Local-only convenience default -- fine because Grafana here is only reachable via

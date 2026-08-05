@@ -9,14 +9,18 @@ Helm concepts.
 Normally done via `scripts/dev-up.sh`, not by hand:
 
 ```sh
-kind create cluster --config kind.yaml
+export IBM_AML_DATA_DIR="$HOME/.interpose/data/ibm-aml"   # transaction-graph's dataset
+envsubst '$IBM_AML_DATA_DIR' < kind.yaml | kind create cluster --config -
 docker build -t interpose:dev .
 docker build -t hello-echo:dev examples/hello-mcp-http-echo
-kind load docker-image interpose:dev hello-echo:dev
+docker build -t ofac-sanctions:dev mcp-servers/ofac-sanctions
+docker build -t transaction-graph:dev mcp-servers/transaction-graph
+kind load docker-image interpose:dev hello-echo:dev ofac-sanctions:dev transaction-graph:dev
 kubectl create namespace interpose-system
-kubectl apply -f dev/mcp-servers/     # dev fixture MCP server, see dev/mcp-servers/README.md
+kubectl apply -f dev/mcp-servers/     # dev fixture MCP servers, see dev/mcp-servers/README.md
 helm install interpose ./charts/interpose -f charts/interpose/values-dev.yaml \
-  --set llm.groqApiKey="$GROQ_API_KEY"   # optional -- see values-dev.yaml
+  --set llm.groqApiKey="$GROQ_API_KEY" \   # optional -- see values-dev.yaml
+  --set policies.pack=aml                  # or "hello-echo" (default), see values.yaml
 ```
 
 ## What this chart actually deploys
@@ -32,18 +36,24 @@ helm install interpose ./charts/interpose -f charts/interpose/values-dev.yaml \
   `alembic upgrade head` against Postgres before anything else touches it.
 - **`interpose-grafana`** -- Grafana with the four dashboards from Section 12.4
   provisioned automatically, gated by `grafana.enabled`.
-- ConfigMaps for the routing table (`upstreams.yaml`) and the demo policy pack
-  (`config/policies/*.yaml`), and a Secret for `DATABASE_URL`/`REDIS_URL`/
+- ConfigMaps for the routing table (`upstreams.yaml`) and a policy pack, whichever
+  `values.yaml`'s `policies.pack` selects -- `files/policies-hello-echo/*.yaml` (the
+  Day 9/10 demo pack, default) or `files/policies-aml/*.yaml` (the real Phase 3 AML
+  pack). Both are checked-in copies of `config/policies/` and `policies/packs/aml/`
+  respectively, kept in sync by hand and checked by
+  `tests/unit/policies/test_chart_policy_sync.py` -- Helm's `.Files.Glob` can't read
+  outside the chart directory. Also a Secret for `DATABASE_URL`/`REDIS_URL`/
   `GROQ_API_KEY` (dev: chart-created via `secrets.createDev`; prod: externally
   managed, referenced via `secrets.existingSecretName`).
 
 **Not deployed by this chart, but wired into it in dev:** `values-dev.yaml` points
-`upstreams.servers.hello-echo` at a real in-cluster MCP server -- the
-`examples/hello-mcp-http-echo` fixture, applied via plain `kubectl apply -f
-dev/mcp-servers/` (see `dev/mcp-servers/README.md`), not templated into this chart.
-That's what makes `/mcp/hello-echo` a genuine end-to-end call through the
-kind-deployed gateway rather than a 404, without the chart owning a workload that
-isn't part of the actual product.
+`upstreams.servers.{hello-echo,ofac-sanctions,transaction-graph}` at real in-cluster
+MCP servers, applied via plain `kubectl apply -f dev/mcp-servers/` (see
+`dev/mcp-servers/README.md`), not templated into this chart: `examples/hello-mcp-http-echo`
+(the Day 9/10 fixture), and the real Phase 3 `mcp-servers/ofac-sanctions` and
+`mcp-servers/transaction-graph`. That's what makes `/mcp/{name}` a genuine end-to-end
+call through the kind-deployed gateway rather than a 404, without the chart owning a
+workload that isn't part of the actual product.
 
 ## Named gaps (deliberately not built yet)
 

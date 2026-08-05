@@ -18,6 +18,18 @@ spec:
       labels:
         {{- include "interpose.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: gateway
+      annotations:
+        # A ConfigMap change alone never restarts pods that mount it -- Kubernetes
+        # has no such trigger built in, and envFrom in particular never live-updates
+        # at all. Found for real: bumping policies.pack from hello-echo to aml left
+        # the running gateway pod serving the *old* ConfigMap's policies indefinitely,
+        # `helm upgrade --wait` reporting success the whole time, since the
+        # Deployment's own pod template hadn't changed. Hashing each ConfigMap's
+        # rendered content into the pod template here forces a real rollout whenever
+        # policies, upstream routes, or app config actually change.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-app.yaml") . | sha256sum }}
+        checksum/policies: {{ include (print $.Template.BasePath "/configmap-policies.yaml") . | sha256sum }}
+        checksum/upstreams: {{ include (print $.Template.BasePath "/configmap-upstreams.yaml") . | sha256sum }}
     spec:
       serviceAccountName: {{ include "interpose.serviceAccountName" . }}
       securityContext:
