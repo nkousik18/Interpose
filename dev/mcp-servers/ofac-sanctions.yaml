@@ -1,0 +1,75 @@
+# Real Phase 3 AML MCP server, deployed the same way hello-echo.yaml is (see that
+# file's header for the full reasoning): a dev/demo fixture applied directly with
+# `kubectl apply -f dev/mcp-servers/`, not templated into charts/interpose/, since the
+# chart owns the actual product and this is an external upstream server the gateway
+# proxies to.
+#
+# No host data dependency, unlike transaction-graph.yaml -- this server fetches the
+# live OFAC SDN/alt lists from Treasury's public API on every pod start (see
+# mcp-servers/ofac-sanctions/Dockerfile), so no volume mount is needed here.
+#
+# Image: built + `kind load docker-image`'d by scripts/dev-up.sh from
+# mcp-servers/ofac-sanctions/Dockerfile. Namespace must already exist
+# (scripts/dev-up.sh creates it before applying this).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ofac-sanctions
+  namespace: interpose-system
+  labels:
+    app.kubernetes.io/name: ofac-sanctions
+    app.kubernetes.io/component: dev-mcp-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ofac-sanctions
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ofac-sanctions
+        app.kubernetes.io/component: dev-mcp-server
+    spec:
+      # Disabled defensively, not because this app has hit the collision -- see
+      # transaction-graph.yaml's comment for the real bug this class of Kubernetes
+      # env-var injection caused there. This app doesn't use service discovery either.
+      enableServiceLinks: false
+      containers:
+        - name: ofac-sanctions
+          image: ofac-sanctions:dev
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: mcp
+              containerPort: 9002
+          readinessProbe:
+            tcpSocket:
+              port: 9002
+            # Longer than hello-echo's: this server fetches the real SDN + alt lists
+            # from Treasury over the network on startup before it's ready to serve.
+            initialDelaySeconds: 5
+            periodSeconds: 3
+            failureThreshold: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ofac-sanctions
+  namespace: interpose-system
+  labels:
+    app.kubernetes.io/name: ofac-sanctions
+    app.kubernetes.io/component: dev-mcp-server
+spec:
+  selector:
+    app.kubernetes.io/name: ofac-sanctions
+    app.kubernetes.io/component: dev-mcp-server
+  ports:
+    - name: mcp
+      port: 9002
+      targetPort: 9002

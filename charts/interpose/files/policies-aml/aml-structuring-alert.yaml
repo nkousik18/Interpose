@@ -1,0 +1,23 @@
+# P5 (Section 9.8): fires when structuring_check's response is flagged. Section 9.8
+# describes the trigger as "signal_strength > 0.7" -- no such field exists on the
+# real StructuringSignal response (mcp-servers/transaction-graph/src/graph_models.py
+# only ever returns a boolean `flagged`); see
+# interpose.policies.packs.aml.aml_structuring_alert's docstring for the full
+# reasoning, including why the "forces the next write through HITL" half of this
+# policy is real (a Redis flag genuinely gets set) but provably a no-op in this pack
+# specifically, since aml-write-hitl-gate already HITL-gates every write
+# unconditionally.
+policy: aml-structuring-alert
+description: >
+  Elevated risk (a structuring signature) requires elevated oversight -- tags the
+  audit entry as a high-severity incident and records the signal for the session.
+applies_to:
+  server: transaction-graph
+  tools: [structuring_check]
+effect:
+  type: custom
+  name: aml_structuring_alert
+  stage: response
+audit:
+  severity: high
+  tag: [aml, structuring-alert]

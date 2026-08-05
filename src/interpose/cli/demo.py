@@ -17,6 +17,7 @@ Run with:
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -67,13 +68,17 @@ def demo_aml(
 def _run_setup() -> None:
     typer.echo("==> interpose demo aml --setup: provisioning the local kind stack")
     typer.echo(
-        "    Named gap: this provisions the gateway + hello-echo (scripts/dev-up.sh) "
-        "but not ofac-sanctions/transaction-graph in-cluster (Phase 3 Days 12-13's own "
-        "named gap: kind.yaml has no extraMounts for the real dataset yet). --run "
-        "against this cluster's gateway only exercises hello-echo, not the AML pack -- "
-        "use the default --gateway-url (a bare `uv run` gateway) for the real AML demo."
+        "    Provisions the gateway plus all three dev fixture MCP servers "
+        "(hello-echo, ofac-sanctions, transaction-graph) in-cluster via "
+        "scripts/dev-up.sh -- kind.yaml mounts $IBM_AML_DATA_DIR "
+        "(default ~/.interpose/data/ibm-aml) into the cluster for transaction-graph, "
+        "and the gateway loads the real AML policy pack "
+        "(charts/interpose/files/policies-aml/, POLICY_PACK=aml). --run against this "
+        "cluster's gateway (--gateway-url http://127.0.0.1:8000, the default) "
+        "exercises the real AML pack end to end."
     )
-    result = subprocess.run([str(DEV_UP_SCRIPT)], cwd=REPO_ROOT, check=False)
+    env = {**os.environ, "POLICY_PACK": "aml"}
+    result = subprocess.run([str(DEV_UP_SCRIPT)], cwd=REPO_ROOT, env=env, check=False)
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)
 

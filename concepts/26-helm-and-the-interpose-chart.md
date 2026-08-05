@@ -34,9 +34,12 @@ syntax with some added functions (`include`, `toYaml`, `.Files.Glob`, `required`
 and a few implicit variables per file: `.Values` (whatever `values.yaml` plus any
 `-f`/`--set` overrides resolved to), `.Release` (name, namespace, …), `.Chart`
 (name, version), `.Files` (read-only access to other files *inside the chart
-directory* — see `configmap-policies.yaml`, which reads `files/policies/*.yaml` this
-way to build the demo policy pack into a ConfigMap, one key per file, without
-duplicating that content into `values.yaml` as an ugly embedded blob).
+directory* — see `configmap-policies.yaml`, which reads
+`files/policies-{{ .Values.policies.pack }}/*.yaml` this way to build a policy pack
+into a ConfigMap, one key per file, without duplicating that content into
+`values.yaml` as an ugly embedded blob. `.Files.Glob` can't reach outside the chart
+directory at all, which is why `files/policies-aml/` is a checked-in copy of
+`policies/packs/aml/` rather than a live reference to it).
 
 ## `_helpers.tpl` and why every name goes through a function
 

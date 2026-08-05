@@ -81,14 +81,26 @@ grafana:
   adminPassword: admin
 
 # ConfigMap contents for Stage 3 routing (interpose.gateway.routing). Empty by
-# default -- this chart doesn't deploy any MCP server itself (Phase 3's OFAC /
-# transaction-graph servers will be real upstreams eventually). A gateway with no
+# default -- this chart doesn't deploy any MCP server itself. A gateway with no
 # configured upstreams still starts and passes /healthz + /readyz; every /mcp/{name}
 # call just 404s as "unknown_server" until an entry exists. `values-dev.yaml`
-# populates this with the `hello-echo` dev fixture (dev/mcp-servers/,
-# scripts/dev-up.sh) so local kind installs have a real upstream to route to.
+# populates this with the dev fixture servers (dev/mcp-servers/, scripts/dev-up.sh)
+# so local kind installs have real upstreams to route to.
 upstreams:
   servers: {}
+
+# Which files/policies-<pack>/ directory the chart's policy ConfigMap is built from
+# (interpose.policies.loader.load_policy_pack, Stage 4). "hello-echo" is the Day 9/10
+# scaffolding pack (charts/interpose/files/policies/) that proves policy enforcement
+# fires at all; "aml" is the real Phase 3 pack (charts/interpose/files/policies-aml/,
+# a checked-in copy of policies/packs/aml/ -- Helm's .Files.Glob can't read outside
+# the chart directory, so this can't be a symlink or a live reference; keep the two
+# in sync by hand, same as files/policies/ vs config/policies/ already are --
+# tests/unit/policies/test_chart_policy_sync.py catches drift). scripts/dev-up.sh
+# passes `--set policies.pack=aml` when POLICY_PACK=aml is set in its environment
+# (interpose demo aml --setup does this automatically).
+policies:
+  pack: hello-echo
 
 serviceAccount:
   create: true

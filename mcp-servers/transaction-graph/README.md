@@ -79,8 +79,7 @@ docker run --rm -p 9003:9003 \
   transaction-graph:dev
 ```
 
-**Named gap:** not yet deployed into the local `kind` cluster the way `hello-echo` and
-`ofac-sanctions` are (`dev/mcp-servers/`) -- doing that for real requires `kind.yaml` to
-mount the host's `~/.interpose/data/ibm-aml/` into the cluster's nodes (`extraMounts`),
-which hasn't been added yet. Deferred to when Day 13's investigation agent needs a real
-in-cluster run, rather than done speculatively here.
+Deployed into the local `kind` cluster the same way `hello-echo` and `ofac-sanctions`
+are (`dev/mcp-servers/transaction-graph.yaml`): `kind.yaml`'s `extraMounts` mount the
+host's `$IBM_AML_DATA_DIR` (default `~/.interpose/data/ibm-aml/`) into every node, and
+the manifest hostPath-mounts that into the pod. See `dev/mcp-servers/README.md`.
