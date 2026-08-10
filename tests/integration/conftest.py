@@ -214,11 +214,23 @@ def clean_state():
     For audit, the hash chain's genesis check (interpose.audit.chain) only makes
     sense against a known, reproducible starting point; for Redis, a leftover ticket
     from a previous test could otherwise be picked up by _approve_shortly/
-    _deny_shortly's "first pending ticket" logic in test_gateway_hitl.py."""
+    _deny_shortly's "first pending ticket" logic in test_gateway_hitl.py.
+
+    Also truncates the three control-plane persistence tables (anomaly_flags,
+    incidents, risk_score_snapshots) -- found for real: without this, a test
+    asserting "exactly one row for this session_id" would pass in isolation but fail
+    the moment the full suite ran twice in a row, since nothing else ever cleared
+    them between runs."""
     engine = create_engine(get_settings().database_url)
     try:
         with engine.begin() as conn:
             conn.execute(text("TRUNCATE TABLE audit_entries RESTART IDENTITY"))
+            conn.execute(
+                text(
+                    "TRUNCATE TABLE anomaly_flags, incidents, risk_score_snapshots "
+                    "RESTART IDENTITY"
+                )
+            )
     finally:
         engine.dispose()
 
