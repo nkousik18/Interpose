@@ -2,12 +2,14 @@ from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
 
-# Imported for its table-registration side effect on Base.metadata (Phase 3 Day 15) --
-# analytics.models shares audit.models.Base rather than a second declarative base, so
-# autogenerate sees both audit-plane and analytics-plane tables in one migration
-# history, but that only works if this module is actually imported somewhere before
+# Imported for their table-registration side effect on Base.metadata (Phase 3 Day 15,
+# and the later control-plane persistence gap-closing work) -- analytics.models and
+# control_plane.models both share audit.models.Base rather than a second declarative
+# base, so autogenerate sees every plane's tables in one migration history, but that
+# only works if these modules are actually imported somewhere before
 # `target_metadata` is read.
 import interpose.analytics.models  # noqa: F401
+import interpose.control_plane.models  # noqa: F401
 from alembic import context
 from interpose.audit.models import Base
 from interpose.config import get_settings

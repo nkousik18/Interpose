@@ -10,6 +10,109 @@ Newest entry first. One entry per work session (not necessarily per calendar day
 
 ---
 
+## 2026-08-05/06 — Closing Phase 3's named gaps, part 2: control-plane decisions now persisted
+
+**What happened:**
+- Closed the second of the three named gaps from Day 15 (see the prior entry): Agent
+  A2's anomaly flags, Agent A4's incident promotions, and Agent A1's session risk
+  score were all computed for real but discarded the moment a graph run finished
+  (A1's risk score fared slightly better -- written to an ephemeral Redis hash that
+  gets overwritten on every decision, so still no history).
+- Added `src/interpose/control_plane/models.py`: three new tables
+  (`anomaly_flags`, `incidents`, `risk_score_snapshots`) sharing
+  `interpose.audit.models.Base`, same one-migration-history reasoning as
+  `interpose.analytics.models`. Deliberately no foreign key back to
+  `audit_entries.id` -- matches `AuditEntrySynthetic.parent_id`'s existing precedent,
+  and several of this project's own control-plane tests use a fixed placeholder
+  `audit_id` that was never seeded, which a hard FK would break for no real benefit.
+- Wired persistence into the three existing node closures
+  (`anomaly_detector.py`, `incident_escalator.py`, `policy_evaluator.py`) right where
+  each value already exists, using the `session_factory` already bound into each
+  closure for their own feature/signal queries. Generated and applied the Alembic
+  migration (`2a594d020568`); registered `control_plane.models` in `alembic/env.py`
+  alongside `analytics.models`.
+- Deliberately did **not** add a Spark aggregation step for this data, unlike Day 15's
+  `agg_*` tables: those exist because the 10M-row synthetic corpus is too large to
+  query directly at interactive speed, but real control-plane traffic runs at tens to
+  low thousands of rows in this project's own use -- a plain `GROUP BY`/`WHERE
+  created_at > ...` query straight from the Grafana panel is simpler and just as
+  fast. Documented this reasoning in the new
+  `concepts/33-persisting-control-plane-decisions.md`.
+- Replaced Dashboard 2's "Anomaly clusters / incident promotions" and Dashboard 3's
+  "Session-level risk score distribution" named-gap text panels with real SQL panels
+  (severity breakdown + a recent-incidents table; a risk-score histogram), each using
+  a `timeFrom: "30d"` override since this data doesn't share the other panels' fixed
+  synthetic-data window.
+- Strengthened `tests/integration/test_control_plane_graph.py`'s existing acceptance
+  tests to assert the new DB rows match the in-memory `InterposeState` exactly
+  (severity, evidence, narrative, promotion rule), not just that the graph produced
+  *something*.
+- **Two real bugs, both caught by running the suite more than once, not by a single
+  green run:** (1) `tests/integration/conftest.py`'s `clean_state` fixture only
+  truncated `audit_entries`, not the three new tables -- invisible until the full
+  suite ran twice in a row, at which point a leftover row from the first run broke a
+  "read exactly one row for this session_id" assertion in the second. Fixed by
+  truncating all three tables in the same fixture. (2) Several of this test file's
+  own scenarios call both `_node_sequence` (a real `astream` run) and `ainvoke` (a
+  second real run) against the *same* input state to check both routing and output --
+  meaning two matching rows land in the new tables per test, not one. Fixed by
+  ordering the read-back query and taking the most recent row, with a comment
+  explaining why more than one row is expected there.
+- **Live-verified locally, thoroughly:** ran a real temporary Grafana container
+  (same provisioning config the Helm chart uses) against real Postgres data, queried
+  the three new panels directly via Grafana's own `/api/ds/query` endpoint --
+  confirmed correctly-shaped rows, not just "the JSON parses." Ran the full local
+  test suite twice back-to-back post-fix (307 passed both times) to prove the
+  isolation fix actually holds, not just that it passed once. `ruff` clean.
+- **In-cluster verification was attempted but not completed, and deliberately left
+  that way** -- see "Loose ends" below. The code itself is solid (thorough local
+  verification above); what's unverified is specifically the in-cluster path.
+
+**Decisions made:**
+- No Spark pre-aggregation for control-plane persistence tables -- direct query
+  against the raw tables is correct at this data's real scale; matches the
+  reasoning `concepts/33-persisting-control-plane-decisions.md` documents.
+- No FK from the three new tables back to `audit_entries` -- consistency with
+  `AuditEntrySynthetic`'s existing precedent, and avoids forcing every existing
+  control-plane test to seed a real audit row it doesn't otherwise need.
+- Stopped chasing in-cluster verification once it became clear most of the "hangs"
+  were self-inflicted testing mistakes (stale port-forwards, retrying against MCP
+  servers still mid-startup, not running a concurrent HITL approver) rather than
+  bugs in the persistence code -- user's explicit call to leave it as-is rather than
+  keep spending session time proving something the local suite already proves.
+
+**Current state:**
+- Two named gaps closed, live-verified in the ways described above. One remains:
+  Prometheus/metrics (Dashboard 1 still a Postgres approximation).
+- Not yet committed -- working tree has the full gap-3 diff staged for a commit this
+  session, same `docs/INTERPOSE_SCOPING.md` stray whitespace diff as before left out.
+- Docker was not running at the end of this session; the `kind` cluster state from
+  the debugging session is gone (recycled once already mid-session, not recreated
+  after). Next session doing in-cluster work starts from a cold cluster either way.
+
+**Next steps:**
+1. Prometheus/metrics (the third and last named gap): OTel Meter-based
+   counters/histograms for the 5 named metrics (scoping Section 12.3) in the
+   gateway, a new OTel Collector in the chart (OTLP receiver + Prometheus exporter),
+   Prometheus itself (or a `PodMonitor`) in-cluster, a second Grafana datasource,
+   Dashboard 1 rewired off its Postgres approximation.
+2. Then reassess Phase 4 (adversarial test suite, Terraform/EKS, blog posts, demo
+   video, v0.1.0) with all of Phase 3's named gaps closed.
+3. Optional, low-priority: revisit in-cluster verification of gap 3's persistence
+   (real anomaly/incident/risk-score rows landing in the cluster's own Postgres via
+   a full HITL-approved AML flow) if it becomes load-bearing later -- not blocking,
+   since local verification is thorough and the code path through the gateway is
+   identical either way.
+
+**Loose ends / reminders:**
+- In-cluster verification for gap 3 is genuinely incomplete, by explicit user
+  decision, not an oversight -- don't assume it's been checked in-cluster if this
+  comes up later.
+- `interpose demo aml --run`'s audit-verification DB mismatch against a remote
+  gateway (flagged in the prior entry) -- still open, still not urgent.
+
+---
+
 ## 2026-08-04 (cont'd) — Closing Phase 3's named gaps, part 1: both AML MCP servers real and enforced in-cluster
 
 **What happened:**

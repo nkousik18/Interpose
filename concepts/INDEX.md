@@ -40,4 +40,6 @@ concept was introduced.
 | 31 | [response-side-policy-evaluation-and-the-aml-pack.md](31-response-side-policy-evaluation-and-the-aml-pack.md) | Why Stage 8 needed real buffering work, the custom-policy plugin's security reasoning, and two real protocol bugs a live test caught: `Mcp-Session-Id` assigned per-upstream-server (not cross-server), and `tools/call` responses being SSE-framed, not bare JSON |
 | 32 | [synthetic-telemetry-and-postgres-backed-dashboards.md](32-synthetic-telemetry-and-postgres-backed-dashboards.md) | Why all 4 Grafana dashboards query Postgres, not Prometheus (none deployed, no `/metrics`); generating 10M rows without a join that doesn't scale; why Spark writes Parquet then a plain COPY loads Postgres (JDBC didn't cooperate); two real aggregation cardinality/double-counting bugs caught by checking row counts |
 
+| 33 | [persisting-control-plane-decisions.md](33-persisting-control-plane-decisions.md) | Why A1/A2/A4's output was ephemeral, writing to Postgres from the same node closure that already computes it, why no FK back to `audit_entries`, why these tables skip the Spark aggregation step real telemetry needs, and a real test-isolation bug (truncate all three or a re-run breaks) |
+
 More get added as we build — each new one lands here the day it's created.

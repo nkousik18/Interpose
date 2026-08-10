@@ -11,13 +11,14 @@ the fallback behavior itself works, not just the happy path.
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import insert
+from sqlalchemy import insert, select
 
 from interpose.audit.chain import GENESIS_HASH, compute_entry_hash
 from interpose.audit.db import create_engine, create_session_factory
 from interpose.audit.models import AuditEntry
 from interpose.config import get_settings
 from interpose.control_plane.graph import build_graph
+from interpose.control_plane.models import AnomalyFlagRecord, IncidentRecord, RiskScoreSnapshot
 from interpose.control_plane.state import Decision, DecisionEvent, InterposeState, PolicyResult
 from interpose.session.redis_client import create_async_redis
 
@@ -124,6 +125,23 @@ async def test_pass_with_low_risk_ends_after_policy_evaluator() -> None:
         assert enriched is not None
         assert enriched.context_features["total_calls"] == 5.0
 
+        async with ctx.session_factory() as db_session:
+            # More than one row is expected here: this test's own _node_sequence
+            # call above already ran the graph once via astream (a real execution,
+            # not a dry-run simulation), and ainvoke runs it again -- both against
+            # the same input state, so every resulting row should be identical.
+            snapshot = (
+                await db_session.execute(
+                    select(RiskScoreSnapshot)
+                    .where(RiskScoreSnapshot.session_id == "sess-pass")
+                    .order_by(RiskScoreSnapshot.id.desc())
+                    .limit(1)
+                )
+            ).scalar_one()
+            assert snapshot.risk_score == enriched.session_risk_score
+            assert snapshot.context_features == enriched.context_features
+            assert snapshot.agent_id == "agent-pass"
+
 
 async def test_pass_with_moderate_risk_reaches_anomaly_detector_which_finds_nothing() -> None:
     async with _GraphContext() as ctx:
@@ -171,6 +189,39 @@ async def test_pass_with_severe_denials_cascades_a2_to_a4() -> None:
         assert result["anomaly"].severity == "high"
         assert result["incident"] is not None
         assert result["incident"].severity == "high"
+
+        async with ctx.session_factory() as db_session:
+            # More than one row is expected: this test's _node_sequence call above
+            # already ran the graph once for real via astream, and ainvoke runs it
+            # again against the same input -- most recent row is what to check.
+            flag_row = (
+                await db_session.execute(
+                    select(AnomalyFlagRecord)
+                    .where(AnomalyFlagRecord.session_id == "sess-severe")
+                    .order_by(AnomalyFlagRecord.id.desc())
+                    .limit(1)
+                )
+            ).scalar_one()
+            assert flag_row.severity == "high"
+            assert flag_row.anomaly_type == result["anomaly"].anomaly_type
+            assert flag_row.evidence == result["anomaly"].evidence
+
+            incident_row = (
+                await db_session.execute(
+                    select(IncidentRecord)
+                    .where(IncidentRecord.session_id == "sess-severe")
+                    .order_by(IncidentRecord.created_at.desc())
+                    .limit(1)
+                )
+            ).scalar_one()
+            assert incident_row.id == result["incident"].incident_id
+            assert incident_row.severity == "high"
+            # should_promote checks repeated_denials before anomaly severity (this
+            # test seeded 5 denials, which trips that rule first) -- severity is
+            # still "high" because of the co-occurring high-severity anomaly, but the
+            # *rule* that actually matched is repeated_denials, not
+            # high_severity_anomaly. See compute_incident_severity's own docstring.
+            assert incident_row.promotion_rule == "repeated_denials"
 
 
 async def test_hold_routes_through_policy_evaluator_to_evidence_composer() -> None:
@@ -240,3 +291,15 @@ async def test_deny_with_repeat_history_is_promoted_to_an_incident() -> None:
         assert incident is not None
         assert incident.severity == "med"
         assert incident.recommended_response == "investigate"  # the fallback's default
+
+        async with ctx.session_factory() as db_session:
+            incident_row = (
+                await db_session.execute(
+                    select(IncidentRecord).where(
+                        IncidentRecord.session_id == "sess-deny-repeat"
+                    )
+                )
+            ).scalar_one()
+            assert incident_row.id == incident.incident_id
+            assert incident_row.promotion_rule == "repeated_denials"
+            assert incident_row.narrative == incident.narrative

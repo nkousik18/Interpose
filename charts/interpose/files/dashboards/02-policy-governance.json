@@ -25,7 +25,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Dashboard 2 of 4 (Section 12.4).** Policy activity and HITL activity across every policy pack, not just AML (Dashboard 3 is AML-specific).\n\nBacked by `agg_policy_fires_daily`/`agg_hitl_daily` (`interpose.analytics.aggregate_telemetry`), synthetic data, fixed 2026-07-06 to 2026-08-03 window -- same reasoning as Dashboard 1.\n\n**Named gap:** Agent A2 (anomaly detector) and Agent A4 (incident escalator) output (`interpose.control_plane`) isn't persisted anywhere queryable for historical aggregation -- it's computed live per-event and never written back to the audit log or a durable table. This dashboard can't show it until that's built; not faked here. See concepts/32-synthetic-telemetry-and-postgres-backed-dashboards.md ."
+        "content": "**Dashboard 2 of 4 (Section 12.4).** Policy activity and HITL activity across every policy pack, not just AML (Dashboard 3 is AML-specific).\n\nTop row backed by `agg_policy_fires_daily`/`agg_hitl_daily` (`interpose.analytics.aggregate_telemetry`), synthetic data, fixed 2026-07-06 to 2026-08-03 window -- same reasoning as Dashboard 1.\n\nBottom row (anomalies/incidents) is **real, not synthetic**: Agent A2's anomaly flags and Agent A4's incident promotions (`interpose.control_plane.agents.anomaly_detector`/`incident_escalator`) are now persisted to `anomaly_flags`/`incidents` as they happen, queried directly (no Spark aggregation step -- real control-plane volume is small enough that a plain `GROUP BY` against the raw table is simpler and just as fast; see `interpose.control_plane.models`). These two panels use a trailing 30-day window, not the fixed synthetic-data range above."
       }
     },
     {
@@ -134,18 +134,57 @@
     },
     {
       "id": 6,
-      "type": "text",
-      "title": "Anomaly clusters (A2) / incident promotions (A4)",
+      "type": "stat",
+      "title": "Anomaly flags (A2), last 30 days, by severity",
       "gridPos": {
         "h": 6,
         "w": 8,
         "x": 16,
         "y": 14
       },
-      "options": {
-        "mode": "markdown",
-        "content": "**Named gap, not populated.** Agent A2's anomaly flags and Agent A4's incident promotions (`interpose.control_plane.agents.anomaly_detector`/`incident_escalator`) are computed live, per `DecisionEvent`, and never written to a durable, queryable table -- there's no historical record for an aggregation job to summarize. Persisting control-plane decisions (not just the gateway's own policy decisions) is future work, named here rather than faked with synthetic numbers this project can't back up."
-      }
+      "timeFrom": "30d",
+      "datasource": {
+        "type": "postgres",
+        "uid": "interpose-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT severity AS metric, count(*) AS value\n        FROM anomaly_flags\n        WHERE created_at >= now() - interval '30 days'\n        GROUP BY severity\n        ORDER BY severity",
+          "format": "table",
+          "datasource": {
+            "type": "postgres",
+            "uid": "interpose-postgres"
+          },
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Recent incident promotions (A4)",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
+      "timeFrom": "30d",
+      "datasource": {
+        "type": "postgres",
+        "uid": "interpose-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT created_at AS time, agent_id, promotion_rule, severity, recommended_response, narrative\n        FROM incidents\n        WHERE created_at >= now() - interval '30 days'\n        ORDER BY created_at DESC\n        LIMIT 50",
+          "format": "table",
+          "datasource": {
+            "type": "postgres",
+            "uid": "interpose-postgres"
+          },
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

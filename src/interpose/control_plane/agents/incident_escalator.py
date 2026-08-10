@@ -35,7 +35,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from interpose.audit.models import AuditEntry
 from interpose.control_plane.llm import LLMError, generate_structured
-from interpose.control_plane.state import Incident, InterposeState
+from interpose.control_plane.models import IncidentRecord
+from interpose.control_plane.state import DecisionEvent, Incident, InterposeState
 
 REPEATED_DENIALS_THRESHOLD = 3
 HIGH_RISK_THRESHOLD = 0.8
@@ -125,6 +126,26 @@ async def _compose_incident_narrative(
         )
 
 
+async def _persist_incident(
+    session_factory: async_sessionmaker, incident: Incident, event: DecisionEvent, rule: str
+) -> None:
+    async with session_factory() as session, session.begin():
+        session.add(
+            IncidentRecord(
+                id=incident.incident_id,
+                created_at=incident.created_at,
+                trace_id=event.trace_id,
+                agent_id=event.agent_id,
+                session_id=event.session_id,
+                promotion_rule=rule,
+                related_events=incident.related_events,
+                severity=incident.severity,
+                narrative=incident.narrative,
+                recommended_response=incident.recommended_response,
+            )
+        )
+
+
 NodeFn = Callable[[InterposeState], Awaitable[dict]]
 
 
@@ -149,6 +170,7 @@ def make_incident_escalator_node(
             recommended_response=output.recommended_response,
             created_at=datetime.now(UTC),
         )
+        await _persist_incident(session_factory, incident, state.event, rule)
         return {"incident": incident}
 
     return node

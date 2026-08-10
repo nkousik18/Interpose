@@ -25,7 +25,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "**Dashboard 3 of 4 (Section 12.4).** AML-pack-specific activity: `ofac-sanctions` + `transaction-graph` only (Phase 3 Days 11-14).\n\nBacked by `agg_aml_pack_daily`. `sanctions_matches` is an illustrative ~35% placeholder rate, not a measured confidence score -- no real match-confidence field exists on synthetic rows the way Day 11's real rapidfuzz score does. Fixed 2026-07-06 to 2026-08-03 window, same as every other dashboard here."
+        "content": "**Dashboard 3 of 4 (Section 12.4).** AML-pack-specific activity: `ofac-sanctions` + `transaction-graph` only (Phase 3 Days 11-14).\n\nTop panels backed by `agg_aml_pack_daily` (synthetic data, fixed 2026-07-06 to 2026-08-03 window). `sanctions_matches` is an illustrative ~35% placeholder rate, not a measured confidence score -- no real match-confidence field exists on synthetic rows the way Day 11's real rapidfuzz score does.\n\nBottom panel (risk score distribution) is **real, not synthetic** -- see that panel's own description -- and uses a trailing 30-day window instead."
       }
     },
     {
@@ -134,18 +134,31 @@
     },
     {
       "id": 6,
-      "type": "text",
-      "title": "Session-level risk score distribution",
+      "type": "barchart",
+      "title": "Session-level risk score distribution (real, last 30 days)",
+      "description": "Agent A1's session risk score (interpose.control_plane.agents.policy_evaluator), bucketed. Still written to the live Redis hash (interpose:session:{id}) for other agents' cheap reads, but now also snapshotted to risk_score_snapshots on every decision -- this panel reads that history directly, not a Spark aggregate (real control-plane volume doesn't need one; see interpose.control_plane.models).",
       "gridPos": {
-        "h": 5,
+        "h": 8,
         "w": 24,
         "x": 0,
         "y": 19
       },
-      "options": {
-        "mode": "markdown",
-        "content": "**Named gap, not populated.** Agent A1's live session risk score (`interpose.control_plane.agents.policy_evaluator`) is written to an ephemeral Redis hash (`interpose:session:{id}`), not persisted anywhere historical -- there's nothing for `aggregate_telemetry` to read a distribution from. Persisting a risk-score snapshot per decision (not just the live Redis value) would be needed before this panel could show real data; named here rather than faked."
-      }
+      "timeFrom": "30d",
+      "datasource": {
+        "type": "postgres",
+        "uid": "interpose-postgres"
+      },
+      "targets": [
+        {
+          "rawSql": "SELECT\n          CASE\n            WHEN risk_score < 0.2 THEN '0.0-0.2'\n            WHEN risk_score < 0.4 THEN '0.2-0.4'\n            WHEN risk_score < 0.6 THEN '0.4-0.6'\n            WHEN risk_score < 0.8 THEN '0.6-0.8'\n            ELSE '0.8-1.0'\n          END AS bucket,\n          count(*) AS value\n        FROM risk_score_snapshots\n        WHERE created_at >= now() - interval '30 days'\n        GROUP BY 1\n        ORDER BY 1",
+          "format": "table",
+          "datasource": {
+            "type": "postgres",
+            "uid": "interpose-postgres"
+          },
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

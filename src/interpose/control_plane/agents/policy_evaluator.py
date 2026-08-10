@@ -24,13 +24,14 @@ from __future__ import annotations
 
 import time
 from collections.abc import Awaitable, Callable
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from redis.asyncio import Redis
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from interpose.audit.models import AuditEntry
+from interpose.control_plane.models import RiskScoreSnapshot
 from interpose.control_plane.state import DecisionEvent, EnrichedDecision, InterposeState
 
 
@@ -106,6 +107,26 @@ async def _record_session_risk_score(
     )
 
 
+async def _persist_risk_score_snapshot(
+    session_factory: async_sessionmaker,
+    event: DecisionEvent,
+    risk_score: float,
+    features: dict[str, float],
+) -> None:
+    async with session_factory() as session, session.begin():
+        session.add(
+            RiskScoreSnapshot(
+                created_at=datetime.now(UTC),
+                trace_id=event.trace_id,
+                audit_id=event.audit_id,
+                agent_id=event.agent_id,
+                session_id=event.session_id,
+                risk_score=risk_score,
+                context_features=features,
+            )
+        )
+
+
 NodeFn = Callable[[InterposeState], Awaitable[dict]]
 
 
@@ -118,6 +139,7 @@ def make_policy_evaluator_node(session_factory: async_sessionmaker, redis_conn: 
         features = await compute_context_features(session_factory, state.event)
         risk_score = compute_session_risk_score(features)
         await _record_session_risk_score(redis_conn, state.event, risk_score)
+        await _persist_risk_score_snapshot(session_factory, state.event, risk_score, features)
         enriched = EnrichedDecision(
             event=state.event,
             context_features=features,

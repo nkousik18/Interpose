@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import statistics
 from collections.abc import Awaitable, Callable
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from interpose.audit.models import AuditEntry
 from interpose.control_plane.llm import LLMError, generate_structured
+from interpose.control_plane.models import AnomalyFlagRecord
 from interpose.control_plane.state import AnomalyFlag, DecisionEvent, InterposeState
 
 # Below this many prior 5-minute windows of history, a z-score isn't meaningful.
@@ -159,6 +160,22 @@ async def _describe_high_severity_anomaly(
         return None
 
 
+async def _persist_anomaly_flag(session_factory: async_sessionmaker, flag: AnomalyFlag) -> None:
+    async with session_factory() as session, session.begin():
+        session.add(
+            AnomalyFlagRecord(
+                created_at=datetime.now(UTC),
+                trace_id=flag.event.trace_id,
+                audit_id=flag.event.audit_id,
+                agent_id=flag.event.agent_id,
+                session_id=flag.event.session_id,
+                anomaly_type=flag.anomaly_type,
+                severity=flag.severity,
+                evidence=flag.evidence,
+            )
+        )
+
+
 NodeFn = Callable[[InterposeState], Awaitable[dict]]
 
 
@@ -176,6 +193,7 @@ def make_anomaly_detector_node(
             if description is not None:
                 evidence = {**flag.evidence, "description": description}
                 flag = flag.model_copy(update={"evidence": evidence})
+        await _persist_anomaly_flag(session_factory, flag)
         return {"anomaly": flag}
 
     return node
