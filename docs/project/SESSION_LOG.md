@@ -10,6 +10,77 @@ Newest entry first. One entry per work session (not necessarily per calendar day
 
 ---
 
+## 2026-08-13 — Live-verifying the Prometheus pipeline, and a real histogram bucket bug
+
+**What happened:**
+- Docker was back up; did the in-cluster live verification PR #17 (2026-08-10/12
+  entry) had explicitly deferred. Recycled the `kind` cluster fresh, confirmed
+  `otelCollector.enabled`/`prometheus.enabled` bring up both pods automatically from
+  `values-dev.yaml`'s defaults with no extra steps.
+- Drove real MCP traffic through the gateway (`echo` calls, one deliberate policy
+  denial) and verified the whole pipeline end to end, at every hop rather than just
+  the final dashboard: `OTEL_EXPORTER_ENDPOINT` correctly set on the gateway pod;
+  the Collector's own `/metrics` endpoint showing real `interpose_tool_calls_total`/
+  `interpose_policy_fires_total` data; Prometheus's scrape target reporting
+  `"health": "up"`; the real, chart-deployed Grafana's Prometheus datasource
+  provisioned correctly; Dashboard 1's actual panel queries, run through Grafana's
+  own `/api/ds/query` endpoint (not a temporary standalone Grafana this time -- the
+  real one), returning a real non-zero rate curve exactly when traffic happened.
+- **Found and fixed a real bug this live check caught, that nothing else would
+  have:** the OTel SDK's default histogram bucket boundaries
+  (`[0, 5, 10, 25, ... 10000]`) are tuned for millisecond-scale values; the
+  `interpose_tool_call_duration_seconds` histogram records in *seconds*, so every
+  real ~30ms tool-call latency landed in the same first bucket (`le=5`, meaning 5
+  *seconds*), and `histogram_quantile()` linearly interpolated across that one wide
+  bucket as if latencies were uniformly spread across 0-5s -- reporting a p95 of
+  4.75 seconds for calls that actually took ~25ms. All unit tests passed, `ruff` was
+  clean, the Collector's raw `/metrics` output even looked plausible at a glance --
+  only computing a real `histogram_quantile()` against real Prometheus data
+  surfaced it. Fixed with `create_histogram(...,
+  explicit_bucket_boundaries_advisory=[...])` (an OTel Python SDK API for exactly
+  this), boundaries set to the OTel/Prometheus semantic-convention default for a
+  seconds-denominated duration histogram (the same millisecond set, divided by
+  1000, capped at 10s -- HITL holds can take up to an hour, but that's what
+  `interpose_gateway_inflight` is for, not this histogram). Rebuilt the image,
+  redeployed in-cluster, re-verified with fresh traffic: p50/p95 came back as
+  0.0175s/0.02425s -- correct, sane numbers. Documented in
+  `concepts/34-metrics-and-prometheus.md` and guarded with a new unit test
+  (`test_duration_bucket_boundaries_are_sub_second_resolution`).
+- Full local suite green with Docker actually up this time (314 passed, including
+  integration tests that couldn't run in the prior two sessions), `ruff` clean.
+  Cluster and `docker-compose` stack torn down cleanly at the end.
+
+**Decisions made:**
+- None new -- this session was verification of already-merged work, plus the one
+  bug fix it surfaced.
+
+**Current state:**
+- Phase 3's Prometheus/metrics gap (part 3) is now genuinely live-verified
+  in-cluster, not just unit-tested and helm-templated as PR #17 originally shipped
+  it. The histogram bucket-boundary fix is real, correctness-affecting, and needs
+  its own PR before Dashboard 1's latency panels can be trusted.
+- Not yet committed at the time of writing.
+
+**Next steps:**
+1. Commit and PR this session's fix (histogram bucket boundaries + the new test +
+   concept doc update), same branch-per-gap workflow as the prior three.
+2. All three of Phase 3's named gaps are now closed *and* live-verified except Part
+   2 (control-plane persistence)'s in-cluster check, still explicitly deferred per
+   the 2026-08-05/06 entry -- optional, low-priority, revisit if it becomes
+   load-bearing (e.g. before recording the demo video).
+3. Then: Phase 4 (adversarial test suite, Terraform/EKS, blog posts, demo video,
+   v0.1.0 tag).
+
+**Loose ends / reminders:**
+- Part 2 (control-plane persistence)'s in-cluster verification is still the one
+  deliberately-skipped check across all three gap-closing sessions -- not urgent,
+  but worth remembering it's the one gap that was never actually run against a real
+  cluster.
+- `interpose demo aml --run`'s audit-verification DB mismatch against a remote
+  gateway -- still open, still not urgent.
+
+---
+
 ## 2026-08-10/12 — Closing Phase 3's named gaps, part 3 (final): real Prometheus metrics, Dashboard 1 rewired — Phase 3's named gaps fully closed
 
 **What happened:**
