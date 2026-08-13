@@ -40,3 +40,18 @@ def test_instruments_are_created_once_and_reused() -> None:
     first = metrics._get_instruments()
     second = metrics._get_instruments()
     assert first is second
+
+
+def test_duration_bucket_boundaries_are_sub_second_resolution() -> None:
+    """Guards against the real bug this module shipped with once: the OTel SDK's own
+    *default* histogram boundaries are tuned for millisecond-scale values, and using
+    them unmodified for a histogram recorded in seconds put nearly every real
+    tool-call latency into one bucket, silently producing a p95 many multiples too
+    high (caught live, against a real Prometheus, not by any unit test -- this test
+    exists so a future regression at least has a chance of being caught here too).
+    Real tool calls (echo, sanctions checks, transaction-graph queries) run in tens
+    of milliseconds locally; the smallest boundaries must be capable of
+    distinguishing them, not lump everything under 5 (seconds!) into one bucket."""
+    boundaries = metrics._DURATION_BUCKET_BOUNDARIES_SECONDS
+    assert boundaries[0] < 0.1
+    assert sorted(boundaries) == list(boundaries)

@@ -59,6 +59,40 @@ _METER_NAME = "interpose.gateway"
 # meant to be watched live during a demo, not a low-overhead production scrape.
 _EXPORT_INTERVAL_MILLIS = 5_000
 
+# The OTel SDK's own *default* histogram bucket boundaries ([0, 5, 10, 25, 50, 75,
+# 100, 250, 500, 750, 1000, 2500, 5000, 7500, 10000]) are tuned for millisecond-scale
+# measurements -- using them unmodified for a histogram recorded in *seconds* (this
+# one) puts almost every real tool-call latency (tens of milliseconds) into the very
+# first non-zero bucket, giving `histogram_quantile()` no real resolution to work
+# with: it linearly interpolates across that one wide [0, 5] bucket as if latencies
+# were spread uniformly across 0-5 *seconds*, producing a p95 many multiples too high.
+# Found for real, live-verifying this module against a real Prometheus: a batch of
+# ~30ms `echo` calls reported a p95 of 4.75s. These boundaries are the OTel/Prometheus
+# semantic-convention default for a *seconds*-denominated duration histogram (the
+# millisecond set above, divided by 1000) -- capped at 10s deliberately: a HITL hold
+# can genuinely take up to its policy's `timeout_seconds` (up to an hour), but this
+# histogram characterizes the gateway's normal request-handling latency for RED-style
+# alerting, not rare, multi-minute human-review waits -- those land in the `+Inf`
+# bucket rather than compressing this histogram's real resolution down to
+# uselessness. `interpose_gateway_inflight` (the saturation metric) is what actually
+# reflects a long-held call in progress.
+_DURATION_BUCKET_BOUNDARIES_SECONDS = (
+    0.005,
+    0.01,
+    0.025,
+    0.05,
+    0.075,
+    0.1,
+    0.25,
+    0.5,
+    0.75,
+    1.0,
+    2.5,
+    5.0,
+    7.5,
+    10.0,
+)
+
 
 def setup_metrics(otlp_endpoint: str) -> MeterProvider:
     """Call once, from the gateway lifespan (no `setup_tracing`-style ordering
@@ -117,6 +151,7 @@ def _get_instruments() -> _Instruments:
                 "interpose_tool_call_duration_seconds",
                 unit="s",
                 description="End-to-end tool call duration, per {server, tool}.",
+                explicit_bucket_boundaries_advisory=_DURATION_BUCKET_BOUNDARIES_SECONDS,
             ),
             gateway_inflight=meter.create_up_down_counter(
                 "interpose_gateway_inflight",

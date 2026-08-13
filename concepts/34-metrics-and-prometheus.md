@@ -55,6 +55,33 @@ what an `UpDownCounter` is for. The Collector's Prometheus exporter renders it a
 Prometheus gauge on export either way, so Grafana sees the same shape regardless of
 which OTel instrument produced it.
 
+## A real bug live verification caught: default histogram buckets are millisecond-scale
+
+The OTel SDK's *default* histogram bucket boundaries, applied automatically to any
+histogram that doesn't specify its own, are `[0, 5, 10, 25, 50, 75, 100, 250, 500,
+750, 1000, 2500, 5000, 7500, 10000]` -- a set tuned for millisecond-scale
+measurements. `interpose_tool_call_duration_seconds` records in *seconds*, so left
+unmodified, real tool-call latencies (tens of milliseconds -- 0.02 to 0.04) all fell
+into the very first non-zero bucket (`le=5`, meaning "5 seconds"). Every unit test
+passed, `ruff` was clean, the Collector's `/metrics` endpoint showed real-looking
+bucket data -- nothing about that would have caught it. Only running real traffic
+through a real Prometheus and asking it to actually compute `histogram_quantile()`
+did: p95 came back as 4.75 *seconds* for a batch of ~30ms calls, because
+`histogram_quantile` linearly interpolates within whichever bucket the data landed
+in, and with everything crammed into one wide [0, 5] bucket, it assumed the data was
+spread uniformly across that whole range.
+
+Fixed with `create_histogram(..., explicit_bucket_boundaries_advisory=[...])` -- an
+API the OTel Python SDK added specifically so an instrument's own creation call can
+suggest boundaries, instead of requiring a separate `View` registered on the
+`MeterProvider`. The replacement boundaries are the OTel/Prometheus semantic
+convention default for a *seconds*-denominated duration histogram: the same
+millisecond set, divided by 1000, capped at 10s (a HITL hold can genuinely take up
+to an hour, but this histogram is for RED-style gateway latency, not rare
+multi-minute human-review waits -- those correctly land in the `+Inf` bucket rather
+than blowing out this histogram's real-latency resolution; `interpose_gateway_inflight`
+is what actually reflects a long-held call in progress).
+
 ## Where the five instruments get called
 
 All five are recorded from `src/interpose/gateway/app.py`, at the points that already
