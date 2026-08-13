@@ -1,0 +1,18 @@
+{{- if .Values.prometheus.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "interpose.fullname" . }}-prometheus
+  labels:
+    {{- include "interpose.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http
+  selector:
+    {{- include "interpose.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+{{- end }}

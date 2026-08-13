@@ -1,0 +1,49 @@
+{{- if .Values.otelCollector.enabled }}
+# The Collector's own config, mounted into the pod below. One receiver (OTLP gRPC,
+# what the gateway's OTEL_EXPORTER_ENDPOINT points at -- both traces and metrics ride
+# the same port, see interpose.observability.metrics's module docstring for why one
+# OTLP pipeline instead of two separate exporter integrations), two pipelines:
+#
+# - metrics -> the `prometheus` exporter, which turns OTel Counter/UpDownCounter/
+#   Histogram instruments into a real `/metrics` endpoint Prometheus can scrape
+#   (charts/interpose/templates/prometheus/configmap.yaml's scrape config points
+#   here). This is what closes the "no Prometheus/`/metrics`" named gap.
+# - traces -> the `debug` exporter (the Collector's own stdout), a deliberate
+#   placeholder, not a real trace backend. No Jaeger/Tempo/Honeycomb is deployed
+#   in-cluster yet (charts/interpose/README.md's own named-gaps table still lists
+#   this) -- routing traces to `debug` keeps the pipeline valid (every receiver must
+#   feed at least one pipeline, or the Collector fails config validation) without
+#   claiming traces are actually queryable anywhere in-cluster. `docker-compose.yaml`
+#   still has real trace visibility via Jaeger, for bare local dev.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "interpose.fullname" . }}-otel-collector
+  labels:
+    {{- include "interpose.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+    processors:
+      batch: {}
+    exporters:
+      prometheus:
+        endpoint: 0.0.0.0:8889
+      debug:
+        verbosity: basic
+    service:
+      pipelines:
+        metrics:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [prometheus]
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [debug]
+{{- end }}

@@ -80,6 +80,36 @@ grafana:
   enabled: true
   adminPassword: admin
 
+# Same embedded-vs-external pattern as postgres.embedded/redis.embedded, for the same
+# reason: a real production deploy brings its own OTel Collector and Prometheus
+# (Section 11.8's "in production, users bring their own backend" philosophy) rather
+# than have this chart stand up a demo-grade, single-replica, no-persistent-storage
+# pair inside a real cluster. false here (this file's production-leaning defaults);
+# values-dev.yaml turns both on for a self-contained kind install.
+#
+# otelCollector.enabled=true deploys charts/interpose/templates/otel-collector/ (an
+# OTel Collector receiving OTLP on :4317, exporting metrics to Prometheus on :8889)
+# and points the gateway's OTEL_EXPORTER_ENDPOINT at it
+# (interpose.otelExporterEndpoint helper, configmap-app.yaml). If false,
+# otelExporterEndpoint below is used instead (a real, operator-supplied external
+# collector) -- empty by default, meaning no endpoint at all: tracing/metrics setup
+# is skipped entirely (interpose.config.Settings.otel_exporter_endpoint's own
+# documented "None means skipped" behavior), matching this chart's behavior before
+# this component existed.
+otelCollector:
+  enabled: false
+otelExporterEndpoint: ""
+
+# prometheus.enabled=true deploys charts/interpose/templates/prometheus/ (a
+# single-replica Prometheus, static-scrape-configured against the OTel Collector's
+# :8889 exporter port -- no Prometheus Operator/PodMonitor CRD, see that ConfigMap's
+# own comment for why) and adds it as a second Grafana datasource
+# (charts/interpose/templates/grafana/configmap-provisioning.yaml), which Dashboard 1
+# (Gateway Health) now queries for real golden-signal metrics instead of the
+# Postgres/audit-log approximation earlier Phase 3 days used.
+prometheus:
+  enabled: false
+
 # ConfigMap contents for Stage 3 routing (interpose.gateway.routing). Empty by
 # default -- this chart doesn't deploy any MCP server itself. A gateway with no
 # configured upstreams still starts and passes /healthz + /readyz; every /mcp/{name}

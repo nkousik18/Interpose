@@ -36,6 +36,13 @@ helm install interpose ./charts/interpose -f charts/interpose/values-dev.yaml \
   `alembic upgrade head` against Postgres before anything else touches it.
 - **`interpose-grafana`** -- Grafana with the four dashboards from Section 12.4
   provisioned automatically, gated by `grafana.enabled`.
+- **`interpose-otel-collector`** / **`interpose-prometheus`** -- an OTel Collector
+  (OTLP receiver, Prometheus exporter) and a single-replica Prometheus scraping it,
+  gated by `otelCollector.enabled` / `prometheus.enabled`. Closes Dashboard 1's real
+  golden-signal metrics gap (Section 12.3); see
+  `concepts/34-metrics-and-prometheus.md`. Production sets both to `false` and
+  points the gateway at an already-running external collector via
+  `otelExporterEndpoint`, same embedded-vs-external split as Postgres/Redis.
 - ConfigMaps for the routing table (`upstreams.yaml`) and a policy pack, whichever
   `values.yaml`'s `policies.pack` selects -- `files/policies-hello-echo/*.yaml` (the
   Day 9/10 demo pack, default) or `files/policies-aml/*.yaml` (the real Phase 3 AML
@@ -67,8 +74,8 @@ stronger deploy.
 | `ingress.yaml` | Local dev uses `kubectl port-forward`; no ingress controller installed by `dev-up.sh` (skips cert-manager + ingress-nginx entirely, unlike the doc's literal script). Real target is an ALB/nginx-ingress in front of the EKS reference deploy, Phase 4. |
 | `rbac.yaml` (ConfigMap-watch Role) | The gateway loads policies once at startup; there's no hot-reload watch loop for it to grant permissions to yet (Day 2's "no reload trigger wired" gap, still open). |
 | `networkpolicy.yaml` | No attacker model exercised yet to test egress restriction against -- meaningful once the adversarial test suite (Phase 4) exists. |
-| `podmonitor.yaml` + Prometheus | Nothing exports `/metrics` yet (no `prometheus-client` instrumentation built) and no Prometheus is deployed to scrape it -- see each dashboard JSON's "how to read" panel. Phase 3/4. |
-| OTel collector + Jaeger in-cluster | Day 10 wired real OpenTelemetry tracing into the gateway (`interpose.observability.tracing`) and Jaeger into `docker-compose.yaml`, but only for bare/docker-compose dev -- no OTel Collector DaemonSet or Jaeger Deployment exists in this chart yet, so a kind install has `otel_exporter_endpoint` unset and traces nothing. See `concepts/27-opentelemetry-and-distributed-tracing.md`. |
+| Jaeger (or any real trace backend) in-cluster | The OTel Collector this chart now deploys (`otelCollector.enabled`) routes traces to its own `debug` log (stdout), not a real backend -- no Jaeger/Tempo/Honeycomb Deployment exists in this chart. Traces are only really viewable in bare/docker-compose dev (Jaeger). See `concepts/34-metrics-and-prometheus.md`'s "What's still a named gap" section. |
+| Prometheus AlertManager + alert rules | Section 11.8 names specific alert thresholds (p99 latency, audit write failures, HITL queue depth, ...) -- Prometheus itself is now real (`prometheus.enabled`), but no AlertManager or rule files are deployed; nothing pages anyone yet. |
 | `crds/` (SparkApplication) | No Spark-on-Kubernetes job exists yet -- Spark today only runs `local[*]` for the one-off AML subsampling job (Phase 0). Real target is Phase 3's telemetry aggregation job. |
 | Pod-security hardening (distroless base, `readOnlyRootFilesystem`, seccomp profile) | The image is already non-root (`runAsUser: 10001`, enforced in both Deployment and Job `securityContext`), which is the cheap, real part. Distroless specifically risks breaking the migration Job's `sh -c` invocation without a real payoff yet -- worth doing once the chart is otherwise stable, not while it's still changing weekly. |
 | `values-prod.yaml`, GitHub Pages chart publishing | No production registry or target cluster exists yet -- Phase 4 (EKS + Terraform). |

@@ -65,6 +65,8 @@ from interpose.control_plane.runner import run_forever
 from interpose.control_plane.state import Decision as CPDecision
 from interpose.control_plane.state import DecisionEvent, PolicyResult
 from interpose.gateway.routing import RoutingTable, load_routing_table
+from interpose.observability import metrics as gateway_metrics
+from interpose.observability.metrics import setup_metrics
 from interpose.observability.tracing import get_tracer, instrument_sqlalchemy_engine, setup_tracing
 from interpose.policies.custom import RequestPolicyContext, ResponsePolicyContext
 from interpose.policies.loader import load_policy_pack
@@ -111,6 +113,7 @@ def create_app(
     settings = get_settings()
     otel_endpoint = settings.otel_exporter_endpoint
     tracer_provider = None
+    meter_provider = None
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -135,8 +138,10 @@ def create_app(
             run_forever(app.state.event_bus, control_plane_graph)
         )
 
+        nonlocal meter_provider
         if otel_endpoint:
             instrument_sqlalchemy_engine(engine)
+            meter_provider = setup_metrics(otel_endpoint)
 
         logger.info("gateway.started routes=%s", list(app.state.routing.servers.keys()))
         try:
@@ -150,6 +155,8 @@ def create_app(
             await engine.dispose()
             if tracer_provider is not None:
                 tracer_provider.shutdown()
+            if meter_provider is not None:
+                meter_provider.shutdown()
 
     app = FastAPI(title="Interpose gateway", lifespan=lifespan)
     if otel_endpoint:
@@ -226,19 +233,33 @@ def create_app(
                 client, request.method, upstream.url, forward_headers, body, request_id
             )
 
-        return await _handle_tool_call(
-            request=request,
-            server_name=server_name,
-            upstream_url=upstream.url,
-            tool_name=tool_call.tool_name,
-            arguments=tool_call.arguments,
-            rpc_id=tool_call.rpc_id,
-            agent_id=agent_id,
-            session_id=request.headers.get("mcp-session-id", "unknown"),
-            forward_headers=forward_headers,
-            body=body,
-            request_id=request_id,
-        )
+        # Saturation + duration (Section 12.3) wrap the whole tool-call handling --
+        # policy evaluation, any HITL wait, and the upstream forward -- since that's
+        # the full span of time a call genuinely holds a "slot" from the caller's
+        # point of view, not just the upstream round trip. Wrapped here, at the one
+        # call site, rather than threaded through every nested return in
+        # `_handle_tool_call`/`_handle_hold`/`_forward_and_record`.
+        gateway_metrics.inflight_start()
+        start = time.monotonic()
+        try:
+            return await _handle_tool_call(
+                request=request,
+                server_name=server_name,
+                upstream_url=upstream.url,
+                tool_name=tool_call.tool_name,
+                arguments=tool_call.arguments,
+                rpc_id=tool_call.rpc_id,
+                agent_id=agent_id,
+                session_id=request.headers.get("mcp-session-id", "unknown"),
+                forward_headers=forward_headers,
+                body=body,
+                request_id=request_id,
+            )
+        finally:
+            gateway_metrics.inflight_end()
+            gateway_metrics.record_tool_call_duration(
+                server=server_name, tool=tool_call.tool_name, seconds=time.monotonic() - start
+            )
 
     return app
 
@@ -330,6 +351,12 @@ async def _handle_tool_call(
             policy_set, rate_limiter, agent_id, request_context, request_id
         )
         span.set_attribute("interpose.decision", decision.outcome.name)
+    for fired in policies_fired:
+        gateway_metrics.record_policy_fire(
+            policy_name=fired["policy"],
+            effect_type=fired["effect_type"],
+            outcome=decision.outcome.value,
+        )
     trace_id = uuid.uuid4()
     args_hash = hashlib.sha256(canonical_json(arguments).encode("utf-8")).hexdigest()
     subject = agent_id or "anonymous"
@@ -343,6 +370,7 @@ async def _handle_tool_call(
             decision.fired_policy,
             decision.reason,
         )
+        gateway_metrics.record_tool_call(server=server_name, tool=tool_name, outcome="deny")
         denied = await audit_store.write_entry(
             status="DENIED",
             trace_id=trace_id,
@@ -533,6 +561,9 @@ async def _handle_hold(
         logger.warning(
             "gateway.hitl_timeout request_id=%s ticket_id=%s", request_id, ticket.ticket_id
         )
+        gateway_metrics.record_tool_call(
+            server=server_name, tool=tool_name, outcome="hold_timeout"
+        )
         await audit_store.write_entry(
             status="DENIED",
             trace_id=trace_id,
@@ -567,6 +598,7 @@ async def _handle_hold(
             ticket.ticket_id,
             resolved.decided_by,
         )
+        gateway_metrics.record_tool_call(server=server_name, tool=tool_name, outcome="hold_denied")
         await audit_store.write_entry(
             status="DENIED",
             trace_id=trace_id,
@@ -730,14 +762,23 @@ async def _forward_and_record(
     except httpx.HTTPError as exc:
         logger.exception("gateway.upstream_error request_id=%s", request_id)
         latency_ms = int((time.monotonic() - start) * 1000)
+        gateway_metrics.record_tool_call(
+            server=server_name, tool=tool_name, outcome="upstream_error"
+        )
+        gateway_metrics.record_tool_call_error(error_type="upstream_unreachable")
         await _write_error("upstream_unreachable", str(exc), latency_ms)
         return _upstream_error_response(rpc_id, exc)
     except ResponsePolicyError as exc:
         logger.exception("gateway.response_policy_error request_id=%s", request_id)
         latency_ms = int((time.monotonic() - start) * 1000)
+        gateway_metrics.record_tool_call(
+            server=server_name, tool=tool_name, outcome="upstream_error"
+        )
+        gateway_metrics.record_tool_call_error(error_type="response_policy_error")
         await _write_error("response_policy_error", str(exc), latency_ms)
         return _upstream_error_response(rpc_id, exc)
 
+    gateway_metrics.record_tool_call(server=server_name, tool=tool_name, outcome="completed")
     latency_ms = int((time.monotonic() - start) * 1000)
     # Latency measures time-to-response-headers for the streamed path, or the full
     # buffered round trip for the response-side-policy path -- and for a held call,
@@ -830,6 +871,7 @@ async def _evaluate_policy_set(
         # become a pass-through -- covers an unknown custom-policy name
         # (UnknownCustomPolicyError) exactly the same as any other engine failure.
         logger.exception("gateway.policy_engine_error request_id=%s", request_id)
+        gateway_metrics.record_tool_call_error(error_type="policy_engine_error")
         return PolicyDecision(Outcome.DENY, None, "policy_engine_error"), []
 
 

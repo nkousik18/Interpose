@@ -33,3 +33,11 @@ grafana:
   # `kubectl port-forward`, never exposed. Do not reuse this value.yaml as a starting
   # point for anything internet-facing.
   adminPassword: admin
+
+# Self-contained kind install gets its own OTel Collector + Prometheus too, same
+# reasoning as embedded Postgres/Redis above -- see values.yaml's own comments on
+# both for why they default off there (a real deploy brings its own).
+otelCollector:
+  enabled: true
+prometheus:
+  enabled: true

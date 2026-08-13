@@ -1,0 +1,26 @@
+{{- if .Values.prometheus.enabled }}
+# Static scrape config, not a PodMonitor/ServiceMonitor CRD -- this chart doesn't
+# install the Prometheus Operator (same "an external chart-repo dependency buys
+# nothing for a dev-only convenience toggle" reasoning values.yaml's postgres.embedded
+# comment already gives for skipping the Bitnami sub-chart), so nothing would ever
+# reconcile a PodMonitor CRD into an actual scrape target anyway. One static job,
+# pointed directly at the OTel Collector's Prometheus-exporter port
+# (charts/interpose/templates/otel-collector/), is the honest, minimal-machinery
+# equivalent for a single, chart-known scrape target.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "interpose.fullname" . }}-prometheus
+  labels:
+    {{- include "interpose.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 5s
+    scrape_configs:
+      - job_name: interpose-otel-collector
+        static_configs:
+          - targets:
+              - {{ include "interpose.fullname" . }}-otel-collector:8889
+{{- end }}

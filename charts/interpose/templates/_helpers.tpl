@@ -81,3 +81,22 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "interpose.redisUrl" -}}
 {{- printf "redis://%s:%s/0" (include "interpose.redisHost" .) (include "interpose.redisPort" .) -}}
 {{- end -}}
+
+{{/*
+OTel Collector OTLP gRPC endpoint the gateway's OTEL_EXPORTER_ENDPOINT points at.
+otelCollector.enabled (in-cluster, chart-deployed collector) takes precedence over
+otelExporterEndpoint (an operator-supplied external collector, e.g. a real production
+deploy per Section 11.8's "bring your own backend") -- see values.yaml's comments on
+both for the full embedded-vs-external reasoning, same pattern as Postgres/Redis.
+Empty string (not used as an env var at all -- configmap-app.yaml only sets
+OTEL_EXPORTER_ENDPOINT when this resolves non-empty) when neither is configured,
+matching the app's own "unset means tracing/metrics setup is skipped entirely"
+default (interpose.config.Settings.otel_exporter_endpoint).
+*/}}
+{{- define "interpose.otelExporterEndpoint" -}}
+{{- if .Values.otelCollector.enabled -}}
+{{- printf "http://%s-otel-collector:4317" (include "interpose.fullname" .) -}}
+{{- else -}}
+{{- .Values.otelExporterEndpoint -}}
+{{- end -}}
+{{- end -}}

@@ -14,14 +14,12 @@ data:
   datasources.yaml: |
     apiVersion: 1
     datasources:
-      # Phase 3 Day 15: all four dashboards query Postgres directly (the Spark
-      # aggregation job's `agg_*` tables, interpose.analytics.aggregate_telemetry)
-      # rather than Prometheus -- there's no Prometheus deployed anywhere in this
-      # chart, and nothing exports `/metrics` for one to scrape (Section 11.5's
-      # PodMonitor + Prometheus operator remain a named, deferred gap). Section
-      # 10.6's own design is Postgres-centric for exactly this data (Spark writes
-      # aggregate tables, not metrics), so this isn't a workaround -- it's the
-      # documented data flow. See concepts/32-synthetic-telemetry-and-postgres-backed-dashboards.md .
+      # Phase 3 Day 15: Dashboards 2-4 (and Dashboard 1's original approximation)
+      # query Postgres directly (the Spark aggregation job's `agg_*` tables,
+      # interpose.analytics.aggregate_telemetry) -- Section 10.6's own design is
+      # Postgres-centric for that data (Spark writes aggregate tables, not metrics),
+      # so this isn't a workaround, it's the documented data flow. See
+      # concepts/32-synthetic-telemetry-and-postgres-backed-dashboards.md .
       - name: Postgres
         uid: interpose-postgres
         type: postgres
@@ -36,6 +34,18 @@ data:
           postgresVersion: 1600
         isDefault: true
         editable: false
+      {{- if .Values.prometheus.enabled }}
+      # Real, live golden-signal metrics (Section 12.3) -- closes the
+      # "no Prometheus/`/metrics`" named gap Dashboard 1 used to carry. See
+      # concepts/34-metrics-and-prometheus.md.
+      - name: Prometheus
+        uid: interpose-prometheus
+        type: prometheus
+        access: proxy
+        url: "http://{{ include "interpose.fullname" . }}-prometheus:9090"
+        isDefault: false
+        editable: false
+      {{- end }}
   dashboards.yaml: |
     apiVersion: 1
     providers:

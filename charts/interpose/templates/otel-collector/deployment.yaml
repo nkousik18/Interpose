@@ -1,0 +1,54 @@
+{{- if .Values.otelCollector.enabled }}
+# Single-replica, no persistence -- the Collector holds no state of its own (every
+# metric/trace it receives is either exported immediately or dropped on restart), so
+# there's nothing to lose that a restart doesn't already tolerate. Same
+# single-replica-is-fine-here reasoning as the chart's embedded Postgres/Redis, for a
+# different reason (those hold real state on a PVC; this holds none at all).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "interpose.fullname" . }}-otel-collector
+  labels:
+    {{- include "interpose.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "interpose.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: otel-collector
+  template:
+    metadata:
+      labels:
+        {{- include "interpose.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: otel-collector
+    spec:
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.111.0
+          args: ["--config=/etc/otel-collector/config.yaml"]
+          ports:
+            - name: otlp-grpc
+              containerPort: 4317
+            - name: prom-exporter
+              containerPort: 8889
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel-collector
+          readinessProbe:
+            tcpSocket:
+              port: otlp-grpc
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "interpose.fullname" . }}-otel-collector
+{{- end }}
