@@ -40,3 +40,7 @@ charts/**/*.tgz
 
 # Local dev cluster (scripts/dev-up.sh / dev-down.sh)
 .dev-up.pids
+
+# Generated evaluation report (scripts/run_eval_report.py) -- a real, regenerable
+# artifact, not source; CI uploads its own copy per run rather than committing one.
+eval_report.json

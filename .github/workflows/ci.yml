@@ -60,4 +60,60 @@ jobs:
           python-version: "3.12"
       - run: uv sync --all-extras --dev --group mcp-servers --group analytics
       - run: uv run alembic upgrade head
-      - run: uv run pytest
+      # tests/adversarial/ has its own dedicated job below -- excluded here so it
+      # isn't silently run twice (testpaths = ["tests"] in pyproject.toml would
+      # otherwise pick it up in both jobs).
+      - run: uv run pytest --ignore=tests/adversarial
+
+  # Phase 4, Day 16 (docs/INTERPOSE_SCOPING.md Section 10.5, gate G9): the full
+  # adversarial suite as its own named CI check, not buried inside the general test
+  # job -- "CI job runs the full adversarial suite; all attacks resolved as
+  # expected" is a specific claim this project makes, so it gets a specific,
+  # visibly-labeled check. Same services/env shape as `test` (a real gateway
+  # subprocess per attack class needs real Postgres/Redis exactly like any other
+  # integration test does).
+  adversarial:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: interpose
+          POSTGRES_PASSWORD: interpose_dev
+          POSTGRES_DB: interpose
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U interpose -d interpose"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+psycopg://interpose:interpose_dev@localhost:5432/interpose
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-extras --dev --group mcp-servers --group analytics
+      - run: uv run alembic upgrade head
+      - run: uv run pytest tests/adversarial/ -v
+      # Section 4.6/14.8's "evaluation report JSON" release deliverable -- reruns the
+      # same scenarios through the same harness (scripts/run_eval_report.py's own
+      # docstring explains why this isn't a second, separate "evaluation" concept),
+      # producing the durable JSON artifact rather than just pytest's pass/fail.
+      - run: uv run python scripts/run_eval_report.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval_report.json

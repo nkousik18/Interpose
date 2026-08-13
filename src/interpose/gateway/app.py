@@ -55,6 +55,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 # resolves regardless of which specific pack YAML files are present in
 # `config/policies`. Additional packs would get an import line here too.
 import interpose.policies.packs.aml  # noqa: F401, E402
+import interpose.policies.packs.demo  # noqa: F401, E402
 from interpose.audit.chain import canonical_json
 from interpose.audit.db import create_engine, create_session_factory
 from interpose.audit.store import AuditStore

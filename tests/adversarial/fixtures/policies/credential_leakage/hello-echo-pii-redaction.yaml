@@ -1,0 +1,13 @@
+# Phase 4 adversarial suite -- see prompt_injection_via_tool_output's policy for why
+# each attack class gets its own isolated policy_dir.
+policy: adversarial-pii-redaction
+description: Redacts SSN/credit-card/bank-account patterns from leaky_echo's responses.
+applies_to:
+  server: hello-echo
+  tools: [leaky_echo]
+effect:
+  type: pii_redaction
+  patterns: [ssn, credit_card, bank_account]
+audit:
+  severity: medium
+  tag: [adversarial]

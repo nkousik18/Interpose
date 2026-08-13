@@ -10,6 +10,114 @@ Newest entry first. One entry per work session (not necessarily per calendar day
 
 ---
 
+## 2026-08-13 (cont'd) — Phase 4 scoped; Day 16, the real adversarial test suite, built and live-verified
+
+**What happened:**
+- Scoped Phase 4 (docs/ROADMAP.md's Proof & Polish): surveyed what actually blocks
+  each of its four pieces before touching anything. Found the adversarial suite
+  (`tests/adversarial/`) was cheaper than its own README claimed -- both gateway
+  capabilities its two most-blocked attack classes needed (a response-side policy
+  hook; real `pii_redaction`) were already built in Phase 3 Day 14, the README just
+  never got updated. Also found: Section 11.7's Spark Operator work was already
+  implicitly cut (absent from ROADMAP's own Day 16-20 list); an eval harness +
+  "evaluation report JSON" is referenced in Section 4.6/14.8 but was never actually
+  scheduled anywhere. Confirmed five real scope decisions with the user before
+  starting: adversarial suite first; Terraform/EKS module-only this phase (no live
+  apply); skip Spark-on-K8s (stays v0.2); build a lightweight eval harness reusing
+  the adversarial suite; and (corrected mid-conversation, see below)
+  `prompt_injection_via_tool_output` gets detect-and-tag only, not a block.
+- Built the real adversarial suite for all 6 required attack classes (Day 16, gate
+  G9): `tests/adversarial/harness.py` (a real gateway + real upstream subprocess
+  pair per attack class, a real MCP client driving scripted calls, assertions
+  against the real audit trail/response/incidents table -- never gateway
+  internals), `generate.py` (real seeded scenario templates, replacing the
+  `NotImplementedError` skeleton), and `test_live_scenarios.py` (all 6 classes, live,
+  in CI).
+- **Two real design mistakes, both caught by running things live, both fixed by
+  restructuring rather than patching:** (1) Tried putting a new allowlist demo
+  policy in the same directory as the existing hitl_gate/rate_limit demo policies --
+  broke two pre-existing tests, because `PolicySet.evaluate`'s allowlist check is an
+  unconditional early return that bypasses denylist/rate_limit/hitl_gate entirely
+  for every tool on that server, not just the ones it lists. Reverted the shared-pack
+  attempt entirely (including the two test edits) and gave each attack class its
+  own fully isolated `policy_dir`
+  (`tests/adversarial/fixtures/policies/<attack_class>/`), so one class's policies
+  can never interact with another's regardless of contents. (2) Initially told the
+  user a response-side custom policy could "fail-closed block" a tainted response --
+  wrong; `interpose.policies.custom`'s own docstring says response-side policies
+  can never deny an already-completed call, confirmed against `aml_structuring_alert`'s
+  real precedent (tags only, never blocks). Went back to the user with the
+  correction before writing more code; landed on detect-and-tag, matching that
+  exact precedent, honestly documented as not blocking.
+- Deliberately scoped fixture volume down from Section 10.5's literal ~500-1000
+  variants/class (confirmed with the user first): 2-4 real, seeded variants per
+  class instead, each varying a genuine axis where one exists (which PII pattern;
+  how many repeated denials), not padded to a bigger number for its own sake.
+- Added `interpose.policies.packs.demo` (the new `hello_echo_prompt_injection_scan`
+  custom policy) and three new hello-echo demo tools (`echo_untrusted`, `leaky_echo`
+  -- kept even after moving off the shared-pack design, since isolated
+  policy-per-class removed the collision risk that motivated them in the first
+  place, and the distinct names still read better in scenario descriptions than
+  overloading `echo`).
+- Wired CI: a new, separately-named `adversarial` job (`.github/workflows/ci.yml`)
+  rather than letting `tests/adversarial/` run silently inside the general `test`
+  job (`testpaths = ["tests"]` would have picked it up either way) -- "CI job runs
+  the full adversarial suite... as a claim" is a specific thing this project
+  claims, so it gets a specific, visibly-labeled check. `test` now excludes
+  `tests/adversarial/` to avoid double-running the same 22 live scenarios.
+- Closed the eval-harness gap without inventing a new concept: `tests/adversarial/harness.py`'s
+  `run_scenario`/`assert_scenario_result` already *is* an evaluation harness
+  (Section 12.2's own definition -- run a scripted scenario against the real
+  system, check pass/fail) built for a different immediate purpose. `scripts/run_eval_report.py`
+  reuses it directly, pointed at producing a JSON summary instead of raising a
+  pytest failure; CI uploads it as a build artifact every run
+  (`actions/upload-artifact`), the same file Day 20's release process attaches to
+  v0.1.0 rather than a separately-generated one.
+- Rewrote `tests/adversarial/README.md` to match reality; added
+  `concepts/35-adversarial-testing-and-evaluation.md` covering both design
+  mistakes, what each attack class actually proves, and the eval-harness reuse
+  reasoning.
+- Full local suite green twice back-to-back (327 passed both times, up from 305 --
+  22 new live adversarial tests), `ruff`/`helm lint` clean.
+
+**Decisions made:**
+- One isolated `policy_dir` per attack class, not one shared adversarial pack --
+  structural fix, not a one-off patch, for the allowlist-bypasses-everything-else
+  behavior found live.
+- `prompt_injection_via_tool_output` detects and tags, does not block -- matches
+  `interpose.policies.custom`'s existing documented design boundary and
+  `aml_structuring_alert`'s real precedent; building a genuine response-side block
+  would have been new gateway scope, explicitly declined.
+- 2-4 real fixture variants per class, not Section 10.5's literal ~500-1000 -- CI
+  cost of the 500th near-identical variant isn't worth its marginal signal.
+- Spark-on-Kubernetes (Section 11.7) stays out of scope for v0.1.0, confirmed
+  explicitly rather than left ambiguous.
+- Terraform/EKS work (next up) is module-only this phase -- build and validate, no
+  live `terraform apply` against real AWS without a separate, explicit go-ahead.
+
+**Current state:**
+- Phase 4 Day 16 (adversarial test suite) is done, real, and live-verified for all
+  6 required attack classes -- gate G9 met. The eval-harness gap referenced in
+  Section 4.6/14.8 but never scheduled anywhere is also closed, same session.
+- Not yet committed at the time of writing.
+
+**Next steps:**
+1. Terraform + EKS module (Day 17): build `terraform/aws-eks/` per Section 11.6 (VPC,
+   EKS, RDS, ElastiCache, S3, IAM/IRSA, KMS, CloudWatch, `examples/minimal/`) --
+   module-only this phase, no live AWS apply without explicit separate sign-off
+   (real ~$150-200/month while running).
+2. Then blog posts (Days 18-19) and the demo video, both meant to stay in the
+   owner's own voice -- support material (diagrams, data, drafts to react to), not
+   ghostwritten wholesale.
+3. Day 20: release polish, v0.1.0 tag, Helm chart + image publishing.
+
+**Loose ends / reminders:**
+- Carried over, still open: Part 2 (control-plane persistence)'s in-cluster
+  verification, `interpose demo aml --run`'s audit-verification DB mismatch against
+  a remote gateway. Neither blocking.
+
+---
+
 ## 2026-08-13 — Live-verifying the Prometheus pipeline, and a real histogram bucket bug
 
 **What happened:**

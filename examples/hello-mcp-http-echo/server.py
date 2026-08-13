@@ -2,10 +2,11 @@
 transport instead of stdio -- this is the transport Interpose's gateway proxies (see
 concepts/09-mcp-handshake-and-transports.md). Used as the trivial upstream server for
 testing the gateway's naive-forward path (docs/ROADMAP.md Phase 1, Day 1) and, via
-`dangerous_tool`, `throttled_tool`, and `hitl_tool`/`hitl_timeout_tool`, the policy
-stage (Phase 1 Days 3/5, Phase 2 Day 6 -- see config/policies/). Also deployed
-in-cluster (dev/mcp-servers/hello-echo.yaml) for a real end-to-end MCP call through
-the kind-deployed gateway (Phase 2 Day 10).
+`dangerous_tool`, `throttled_tool`, `hitl_tool`/`hitl_timeout_tool`, `echo_untrusted`,
+and `leaky_echo`, the policy stage (Phase 1 Days 3/5, Phase 2 Day 6, Phase 4's
+adversarial suite -- see config/policies/). Also deployed in-cluster
+(dev/mcp-servers/hello-echo.yaml) for a real end-to-end MCP call through the
+kind-deployed gateway (Phase 2 Day 10).
 """
 
 import os
@@ -31,7 +32,11 @@ def echo(text: str) -> str:
 def dangerous_tool() -> str:
     """A tool that only exists to be denylisted -- the gateway's policy config
     (config/policies/hello-echo-denylist.yaml) blocks it. If a test ever sees this
-    tool actually execute, the policy stage isn't working."""
+    tool actually execute, the policy stage isn't working. Also reused (not
+    denylisted there) by the adversarial suite's own isolated policy pack
+    (tests/adversarial/fixtures/policies/) as the tool deliberately excluded from
+    its allowlist -- a separate gateway process/policy_dir, so there's no
+    interaction between the two."""
     return "should never be reached"
 
 
@@ -55,6 +60,26 @@ def hitl_timeout_tool() -> str:
     """Same as hitl_tool, but its policy uses a very short timeout, so a test can
     exercise the "nobody reviewed it in time" path without waiting long."""
     return "should never be reached (nobody approves this one in the tests)"
+
+
+@mcp.tool()
+def echo_untrusted(text: str) -> str:
+    """Same behavior as `echo` -- returns `text` unchanged. Named separately purely
+    for readability in the adversarial suite's own scenarios
+    (tests/adversarial/fixtures/policies/), which scopes a prompt-injection-detection
+    policy to this tool specifically -- a self-documenting scenario reads "call
+    echo_untrusted with an injection payload" rather than overloading `echo` itself.
+    That policy pack is a separate gateway process from `config/policies/`, so this
+    tool has no policy applied at all when reached the normal way."""
+    return text
+
+
+@mcp.tool()
+def leaky_echo(text: str) -> str:
+    """Same behavior as `echo` -- returns `text` unchanged. Named separately for the
+    same readability reason as `echo_untrusted` -- the adversarial suite's own
+    isolated policy pack scopes a `pii_redaction` policy to this tool specifically."""
+    return text
 
 
 if __name__ == "__main__":

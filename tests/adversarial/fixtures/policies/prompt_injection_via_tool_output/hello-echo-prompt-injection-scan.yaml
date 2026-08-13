@@ -1,0 +1,19 @@
+# Phase 4 adversarial suite -- one attack class per isolated policy_dir (see
+# tests/adversarial/README.md and harness.py for why: an allowlist policy
+# unconditionally bypasses hitl_gate/rate_limit/denylist for the same server, so
+# each class gets its own directory rather than sharing one pack across all six).
+policy: adversarial-prompt-injection-scan
+description: >
+  Flags tool responses containing prompt-injection-shaped instructions, without
+  blocking delivery -- see interpose.policies.packs.demo's module docstring for why
+  a response-side custom policy can't block outright.
+applies_to:
+  server: hello-echo
+  tools: [echo_untrusted]
+effect:
+  type: custom
+  name: hello_echo_prompt_injection_scan
+  stage: response
+audit:
+  severity: high
+  tag: [adversarial]

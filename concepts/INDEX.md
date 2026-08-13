@@ -44,4 +44,6 @@ concept was introduced.
 
 | 34 | [metrics-and-prometheus.md](34-metrics-and-prometheus.md) | Why an OTel Collector instead of `prometheus_client` + `/metrics`, the 5 golden-signal instruments and why saturation is an UpDownCounter not a gauge, where each is recorded in the gateway, and the embedded-vs-external Prometheus split |
 
+| 35 | [adversarial-testing-and-evaluation.md](35-adversarial-testing-and-evaluation.md) | What adversarial testing means here (live claims, not mocks), two real design mistakes the allowlist/response-side-policy architecture predicted and caught, what each of the 6 attack classes actually proves, and why the eval harness needed reuse, not a new concept |
+
 More get added as we build — each new one lands here the day it's created.

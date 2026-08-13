@@ -1,0 +1,14 @@
+# Phase 4 adversarial suite -- see prompt_injection_via_tool_output's policy for why
+# each attack class gets its own isolated policy_dir.
+policy: adversarial-hitl-gate
+description: Holds hitl_tool for human review -- proves hitl_gate fires (no auto-approve).
+applies_to:
+  server: hello-echo
+  tools: [hitl_tool]
+effect:
+  type: hitl_gate
+  reviewer_group: adversarial-reviewers
+  timeout_seconds: 2
+audit:
+  severity: medium
+  tag: [adversarial]
