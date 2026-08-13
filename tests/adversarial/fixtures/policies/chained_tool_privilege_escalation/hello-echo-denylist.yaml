@@ -1,0 +1,18 @@
+# Phase 4 adversarial suite -- see prompt_injection_via_tool_output's policy for why
+# each attack class gets its own isolated policy_dir. This class's "attack" is the
+# scripted call sequence itself (the same denied tool called repeatedly by the same
+# agent, simulating an agent probing for a permission boundary it can cross) --
+# the defense is entirely Agent A2 (repeated-denials anomaly) + Agent A4 (incident
+# promotion), both already real; this policy only needs to reliably deny every call
+# so the harness gets real DENIED rows to trip them with.
+policy: adversarial-chained-denylist
+description: Always denies dangerous_tool -- the repeated denials are the attack pattern.
+applies_to:
+  server: hello-echo
+  tools: [dangerous_tool]
+effect:
+  type: denylist
+  reason: dangerous_tool is denylisted for this local demo
+audit:
+  severity: high
+  tag: [adversarial]

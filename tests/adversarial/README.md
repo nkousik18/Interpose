@@ -5,44 +5,72 @@ least 6 documented attack classes, each with reproducible scripted MCP call
 sequences and a labeled expected outcome, run in CI as a claim that Interpose
 actually defends against that threat.
 
-**Phase 2 Day 10 status: skeleton only, zero real scenarios.** This directory has the
-schema a scenario must satisfy (`schema.py`), the registry of the 6 required attack
-classes (`attack_classes.py`), and the JSONL read/write machinery (`generate.py`) --
-but `generate()` raises `NotImplementedError` for every class right now
-(`test_skeleton.py` asserts this deliberately, not as a bug). See
-`docs/ROADMAP.md`/`docs/project/SESSION_LOG.md` for why: writing scenario templates
-ahead of a harness that runs them through a live gateway would just be untested
-prose, and two classes need gateway capabilities that don't exist yet regardless.
+**Phase 4 status: real, live-verified, for all 6 classes.** Every scenario runs a
+real MCP client through a real gateway subprocess talking to a real upstream server,
+and the assertion is against the real audit trail (or, for two classes, the real MCP
+response content or the real `incidents` table) -- never gateway internals. See
+`docs/project/SESSION_LOG.md` for the two real design corrections this took to get
+right: an allowlist policy unconditionally bypasses every other request-side effect
+for the same server, and a response-side custom policy can never deny an
+already-completed call.
 
 ## The 6 required attack classes
 
-| Attack class | Defense mechanism | What's missing before a real fixture |
+| Attack class | Defense mechanism | Isolated policy pack |
 |---|---|---|
-| `prompt_injection_via_tool_output` | Response-side (Hook 2) policy scan, quarantine for HITL | **A gateway capability**: only the pre-forward hook (Hook 1) is wired in today |
-| `data_exfiltration` | `rate_limit`/denylist policy + Agent A2 anomaly detection | Just a scripted fixture -- the enforcement already exists |
-| `unauthorized_write` | `hitl_gate` policy holds the call | Just a scripted fixture |
-| `over_permissioned_tool_access` | allowlist policy denies at `tools/call` | Just a scripted fixture |
-| `credential_leakage` | `pii_redaction` policy redacts and audits | **A gateway capability**: `pii_redaction` is still a schema-only stub (`interpose.policies.schema`) that raises `NotImplementedError` if evaluated |
-| `chained_tool_privilege_escalation` | Agent A2 anomaly detector + Agent A4 incident escalator promote the pattern | Just a scripted fixture -- both agents already exist |
+| `prompt_injection_via_tool_output` | Response-side custom policy detects and tags -- does not block delivery (see `interpose.policies.packs.demo`'s docstring for why) | `fixtures/policies/prompt_injection_via_tool_output/` |
+| `data_exfiltration` | `rate_limit` denies the call past its window | `fixtures/policies/data_exfiltration/` |
+| `unauthorized_write` | `hitl_gate` holds the call; nobody approves it, so it times out and denies | `fixtures/policies/unauthorized_write/` |
+| `over_permissioned_tool_access` | `allowlist` default-denies anything not explicitly listed | `fixtures/policies/over_permissioned_tool_access/` |
+| `credential_leakage` | `pii_redaction` redacts the response before it reaches the agent | `fixtures/policies/credential_leakage/` |
+| `chained_tool_privilege_escalation` | Agent A4 promotes repeated denials to an incident (the direct DENY->A4 graph path, independent of Agent A2) | `fixtures/policies/chained_tool_privilege_escalation/` |
 
-(See `attack_classes.py`'s `ATTACK_CLASS_REGISTRY` for the same information as code,
-not just this table -- that's the one `test_skeleton.py` actually checks against.)
+(See `attack_classes.py`'s `ATTACK_CLASS_REGISTRY` for the same information as code.)
 
-## What a real scenario will look like
+## Why 6 separate, isolated policy directories -- not one shared pack
+
+An `allowlist` policy for a server is an unconditional early return in
+`PolicySet.evaluate` (`allowlist -> denylist -> rate_limit -> custom -> hitl_gate`):
+if a tool is on the allowlist, none of the other effect types are ever even checked
+for it. Discovered live, building this suite: putting `over_permissioned_tool_access`'s
+allowlist policy in the same pack as `unauthorized_write`'s `hitl_gate`
+policy silently made the HITL test's tool bypass its own hold entirely the moment
+both existed together. Giving each attack class its own `policy_dir`
+(`tests/adversarial/harness.py::scenario_gateway` starts a fresh gateway subprocess
+per class, `POLICY_DIR` pointed at that one class's directory) makes this class of
+bug structurally impossible -- one class's policies can never affect another's,
+regardless of what either pack's YAML contains.
+
+## What a scenario looks like
 
 A `schema.AdversarialScenario`: an `id`, an `attack_class`, a human `description`, a
-list of scripted `tools/call` steps (`server`/`tool`/`args`), and an `ExpectedOutcome`
-(the audit `status` -- `INTENT`/`COMPLETED`/`DENIED`/`HELD`/`UPSTREAM_ERROR`, per
-`interpose.audit.models.STATUSES` -- plus which policy, if any, should have fired).
-`generate.write_fixtures`/`load_fixtures` round-trip a list of these through JSONL in
-`fixtures/`, per Section 10.5's storage format.
+list of scripted `tools/call` steps (`server`/`tool`/`args`), and an
+`ExpectedOutcome` -- the audit `status` and `policy_fired` (the two fields every
+class needs), plus a few optional fields a couple of classes need beyond what the
+audit trail alone can express: `response_contains`/`response_not_contains` (real MCP
+response content, for `credential_leakage`'s redaction proof), `tags_include` (for
+`prompt_injection_via_tool_output`'s detect-only tag), and `incident_expected` (for
+`chained_tool_privilege_escalation`'s real `incidents` table row, Phase 3's
+control-plane persistence work). `generate.write_fixtures`/`load_fixtures`
+round-trip a list of these through JSONL in `fixtures/*.jsonl`.
 
-## Closing the gap (Phase 4)
+## Fixture volume: a deliberate, smaller number than Section 10.5's literal ~500-1000
 
-1. Build the two missing gateway capabilities (response-side policy hook; real
-   `pii_redaction`).
-2. Write a harness that runs a scenario's `calls` through a real live gateway (same
-   subprocess pattern as `tests/integration/conftest.py`) and asserts the resulting
-   audit entries match `expected`.
-3. Only then write real templates in `generate.py` and let it actually produce the
-   ~500-1000 variants per class Section 10.5 calls for.
+That number is templated-argument-permutation volume (different agent_id/session_id/
+argument content against the same underlying scenario shape), not 500 meaningfully
+different attacks -- the marginal signal of variant #500 over variant #5 is close to
+zero, while the CI cost of a real live gateway round trip per variant is not. Each
+class gets 2-4 real variants instead (`generate.py`), seeded for reproducibility,
+varying a genuine axis where one exists (which PII pattern; how many repeated
+denials) rather than padded to hit a bigger count.
+
+## Running it
+
+```sh
+uv run pytest tests/adversarial/test_live_scenarios.py -v
+```
+
+Every one of the 6 parametrized cases spins up its own real gateway + hello-echo
+upstream subprocess pair, runs every generated scenario for that class through it,
+and tears both down -- ~20-25s total for all 6 classes on this laptop. Wired into CI
+(`.github/workflows/ci.yml`) alongside the rest of the integration suite.

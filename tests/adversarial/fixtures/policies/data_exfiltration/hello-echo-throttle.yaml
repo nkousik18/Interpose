@@ -1,0 +1,14 @@
+# Phase 4 adversarial suite -- see prompt_injection_via_tool_output's policy for why
+# each attack class gets its own isolated policy_dir.
+policy: adversarial-throttle
+description: Rate-limits throttled_tool to 1 call per window -- proves rate_limit fires.
+applies_to:
+  server: hello-echo
+  tools: [throttled_tool]
+effect:
+  type: rate_limit
+  limit: 1
+  window_seconds: 60
+audit:
+  severity: low
+  tag: [adversarial]

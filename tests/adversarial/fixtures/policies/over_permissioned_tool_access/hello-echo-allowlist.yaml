@@ -1,0 +1,18 @@
+# Phase 4 adversarial suite -- see prompt_injection_via_tool_output's policy for why
+# each attack class gets its own isolated policy_dir: declaring this allowlist here
+# has zero effect on any other class's own gateway subprocess/policy_dir.
+#
+# Only `echo` is listed -- this class's scenario only needs one allowed control call
+# (echo) and one excluded call (dangerous_tool) to prove default-deny-by-omission;
+# it doesn't need throttled_tool/hitl_tool reachable the way other classes' own
+# isolated packs do.
+policy: adversarial-allowlist
+description: Allows only echo on hello-echo -- proves an allowlist default-denies everything else.
+applies_to:
+  server: hello-echo
+  tools: [echo]
+effect:
+  type: allowlist
+audit:
+  severity: low
+  tag: [adversarial]

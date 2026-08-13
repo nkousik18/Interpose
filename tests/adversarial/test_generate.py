@@ -1,6 +1,6 @@
-"""Tests for the fixture generator skeleton itself (Phase 2 Day 10) -- not
-adversarial tests. Real per-attack-class tests land in Phase 4 once `generate()`
-actually produces scenarios; see README.md.
+"""Tests for the fixture generator itself (Phase 4) -- pure Pydantic/generation
+logic, no live gateway needed. Real per-attack-class *live* proof (each generated
+scenario actually run through a real gateway) is `test_live_scenarios.py`, not here.
 """
 
 import pytest
@@ -16,10 +16,24 @@ def test_registry_covers_exactly_the_six_g9_required_classes():
 
 
 @pytest.mark.parametrize("attack_class", list(AttackClass))
-def test_generate_names_what_is_missing(attack_class):
-    with pytest.raises(NotImplementedError) as exc_info:
-        generate(attack_class, count=1, seed=42)
-    assert ATTACK_CLASS_REGISTRY[attack_class].capability_needed in str(exc_info.value)
+def test_generate_produces_at_least_one_real_scenario(attack_class):
+    scenarios = generate(attack_class, count=4, seed=42)
+    assert len(scenarios) >= 1
+    assert all(s.attack_class == attack_class for s in scenarios)
+    assert all(s.calls for s in scenarios)  # every scenario scripts at least one call
+
+
+@pytest.mark.parametrize("attack_class", list(AttackClass))
+def test_generate_is_reproducible_for_a_fixed_seed(attack_class):
+    first = generate(attack_class, count=4, seed=42)
+    second = generate(attack_class, count=4, seed=42)
+    assert first == second
+
+
+def test_generate_ids_are_unique_within_a_class():
+    scenarios = generate(AttackClass.PROMPT_INJECTION_VIA_TOOL_OUTPUT, count=4, seed=42)
+    ids = [s.id for s in scenarios]
+    assert len(ids) == len(set(ids))
 
 
 def test_scenario_round_trips_through_jsonl(tmp_path):
