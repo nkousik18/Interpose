@@ -42,4 +42,6 @@ concept was introduced.
 
 | 33 | [persisting-control-plane-decisions.md](33-persisting-control-plane-decisions.md) | Why A1/A2/A4's output was ephemeral, writing to Postgres from the same node closure that already computes it, why no FK back to `audit_entries`, why these tables skip the Spark aggregation step real telemetry needs, and a real test-isolation bug (truncate all three or a re-run breaks) |
 
+| 34 | [metrics-and-prometheus.md](34-metrics-and-prometheus.md) | Why an OTel Collector instead of `prometheus_client` + `/metrics`, the 5 golden-signal instruments and why saturation is an UpDownCounter not a gauge, where each is recorded in the gateway, and the embedded-vs-external Prometheus split |
+
 More get added as we build — each new one lands here the day it's created.

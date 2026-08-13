@@ -1,0 +1,61 @@
+{{- if .Values.prometheus.enabled }}
+# No PVC -- an `emptyDir`, deliberately. This is the demo/dev metrics store closing
+# the "no Prometheus deployed" named gap, not a production time-series database:
+# losing scrape history on a pod restart is an acceptable, honestly-scoped
+# simplification (a real deploy brings its own Prometheus per Section 11.8's "users
+# bring their own backend" philosophy -- see values.yaml's prometheus.enabled comment
+# for why this whole component defaults off there).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "interpose.fullname" . }}-prometheus
+  labels:
+    {{- include "interpose.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "interpose.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: prometheus
+  template:
+    metadata:
+      labels:
+        {{- include "interpose.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.55.1
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            - "--storage.tsdb.retention.time=6h"
+          ports:
+            - name: http
+              containerPort: 9090
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+            - name: data
+              mountPath: /prometheus
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "interpose.fullname" . }}-prometheus
+        - name: data
+          emptyDir: {}
+{{- end }}

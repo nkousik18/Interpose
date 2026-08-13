@@ -11,3 +11,7 @@ data:
   GROQ_MODEL: {{ .Values.llm.groqModel | quote }}
   CONFIG_PATH: /etc/interpose/upstreams/upstreams.yaml
   POLICY_DIR: /etc/interpose/policies
+  {{- $otelEndpoint := include "interpose.otelExporterEndpoint" . }}
+  {{- if $otelEndpoint }}
+  OTEL_EXPORTER_ENDPOINT: {{ $otelEndpoint | quote }}
+  {{- end }}

@@ -10,6 +10,108 @@ Newest entry first. One entry per work session (not necessarily per calendar day
 
 ---
 
+## 2026-08-10/12 — Closing Phase 3's named gaps, part 3 (final): real Prometheus metrics, Dashboard 1 rewired — Phase 3's named gaps fully closed
+
+**What happened:**
+- Closed the third and last of Day 15's named gaps: no Prometheus/`/metrics`,
+  Dashboard 1 (Gateway Health) left as a Postgres/audit-log approximation.
+- Added `src/interpose/observability/metrics.py`: five OTel instruments matching
+  Section 12.3's golden-signal table exactly (`interpose_tool_calls_total`,
+  `interpose_tool_call_errors_total`, `interpose_tool_call_duration_seconds`,
+  `interpose_gateway_inflight`, `interpose_policy_fires_total`). Reuses the same
+  OTLP pipeline the existing tracing setup already uses
+  (`Settings.otel_exporter_endpoint`) rather than a separate `prometheus_client` +
+  hand-rolled `/metrics` endpoint -- one dependency set, no new packages needed
+  (`opentelemetry-sdk`/`opentelemetry-exporter-otlp-proto-grpc` already cover metrics
+  as well as traces). `interpose_gateway_inflight` is an `UpDownCounter`, not an
+  OTel "gauge" -- a gauge is callback-based (report the current value on request),
+  which doesn't fit "increment on call start, decrement on call end" at all; the
+  Collector's Prometheus exporter renders an UpDownCounter as a Prometheus gauge on
+  export regardless, so the end result looks the same to Grafana either way.
+- Wired all five into `src/interpose/gateway/app.py` at the points that already
+  compute each value -- no new tracking state. Saturation + duration wrap
+  `_handle_tool_call`'s one call site in `proxy_mcp` (covering policy evaluation,
+  any HITL wait, and the upstream forward as one "in flight" span, not just the
+  final forward call); tool-calls/errors are recorded at each existing
+  terminal-outcome branch; policy fires reuse the exact `policies_fired` list
+  already written to `audit_entries.policies_fired`, so "fired" means the same
+  thing in both places.
+- Added an OTel Collector and a single-replica Prometheus to the Helm chart
+  (`charts/interpose/templates/otel-collector/`, `.../prometheus/`) -- no Prometheus
+  Operator/PodMonitor CRD, since nothing in this project installs one; a plain
+  static scrape config pointed at the Collector's exporter port is the honest
+  minimal-machinery equivalent. Both gated behind `otelCollector.enabled` /
+  `prometheus.enabled`, defaulting `false` in `values.yaml` (production-leaning:
+  Section 11.8 says real deployments bring their own backend) and `true` in
+  `values-dev.yaml` (self-contained kind install) -- same embedded-vs-external split
+  `postgres.embedded`/`redis.embedded` already established.
+- Added a second Grafana datasource (Prometheus) and fully rewrote Dashboard 1
+  around real PromQL panels (tool calls/sec by outcome, latency percentiles via
+  `histogram_quantile`, error rate, saturation, per-server health table) -- replacing
+  the fixed-window Postgres approximation entirely rather than keeping both, since
+  Dashboard 1's synthetic panels were always explicitly named as temporary
+  scaffolding (unlike Dashboards 2/3's synthetic panels, which represent a
+  genuinely large demo corpus still worth keeping). Named, honestly, what's still
+  not shown: circuit breaker states (no circuit breaker exists in the gateway) and
+  AlertManager/alert rules (Prometheus itself is real now; nothing pages anyone
+  yet).
+- Added `concepts/34-metrics-and-prometheus.md` and a `tests/unit/observability/`
+  suite (6 tests: every `record_*`/`inflight_*` function is safe to call without
+  `setup_metrics` ever running -- the same no-op-meter fallback the app relies on
+  whenever `OTEL_EXPORTER_ENDPOINT` is unset -- plus one test confirming instruments
+  are created once and reused, not rebuilt per call).
+- **Live verification of this gap was not done this session** -- Docker wasn't
+  running (see "Loose ends"). What's verified instead: `helm lint`/`helm template`
+  clean for both the dev overlay (`otelCollector.enabled=true`) and bare
+  `values.yaml` (both off, confirming production mode stays minimal -- 4
+  Deployments, no `OTEL_EXPORTER_ENDPOINT` set at all), full local unit suite green
+  (259 passed), `ruff` clean. CI (which has its own Postgres/Redis) is the first
+  real integration-test run this change gets; merged only after those checks pass.
+
+**Decisions made:**
+- Reused the existing tracing OTLP pipeline for metrics rather than a parallel
+  `prometheus_client` integration -- deliberate, not just convenient: one pipeline,
+  one endpoint setting, one Collector receiving both signals.
+- Dashboard 1's synthetic panels were fully replaced, not kept alongside the new
+  real ones (unlike Dashboards 2/3's approach in the prior two sessions) -- they
+  were always named as a stand-in for what this session builds, not a demo artifact
+  worth preserving on its own.
+- `otelCollector`/`prometheus` default off in production values, on in dev values --
+  consistent with the existing Postgres/Redis embedded-vs-external pattern and
+  Section 11.8's stated "bring your own backend" philosophy for real deployments.
+
+**Current state:**
+- **All three of Phase 3's named gaps are now closed**: both AML MCP servers real
+  and policy-enforced in-cluster (part 1), control-plane anomaly/incident/risk-score
+  history persisted and dashboarded (part 2), real Prometheus metrics with Dashboard
+  1 rewired around them (part 3, this entry).
+- Not yet committed at the time of writing -- working tree has the full gap-3-part-3
+  diff staged for a commit this session, `docs/INTERPOSE_SCOPING.md`'s stray
+  whitespace diff (same one carried since before this three-part effort started)
+  left out again.
+- Docker was not running this session -- no `kind` cluster exists right now; the
+  in-cluster state from the part-1/part-2 sessions is long gone (recycled once,
+  never recreated after). Next session touching the cluster starts cold either way.
+
+**Next steps:**
+1. Reassess Phase 4 (adversarial test suite, currently a Day-10 skeleton; Terraform
+   module + real EKS deploy; two blog posts; edited demo video; the v0.1.0 tag) now
+   that every Phase 3 named gap is closed.
+2. Optional, low-priority, carried over from part 2: in-cluster live verification of
+   both the control-plane persistence tables and this session's Prometheus pipeline,
+   if it becomes load-bearing later (e.g. before recording the demo video) --
+   neither is blocking today.
+
+**Loose ends / reminders:**
+- Docker wasn't running this session; nothing here was live-verified against a real
+  `kind` cluster or a real scraped Prometheus target -- CI's own test run is the
+  first real integration check this change gets.
+- Carried over, still open: `interpose demo aml --run`'s audit-verification DB
+  mismatch against a remote gateway; in-cluster verification for Part 2's
+  persistence tables.
+
+---
+
 ## 2026-08-05/06 — Closing Phase 3's named gaps, part 2: control-plane decisions now persisted
 
 **What happened:**
