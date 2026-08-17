@@ -46,4 +46,6 @@ concept was introduced.
 
 | 35 | [adversarial-testing-and-evaluation.md](35-adversarial-testing-and-evaluation.md) | What adversarial testing means here (live claims, not mocks), two real design mistakes the allowlist/response-side-policy architecture predicted and caught, what each of the 6 attack classes actually proves, and why the eval harness needed reuse, not a new concept |
 
+| 36 | [terraform-and-irsa.md](36-terraform-and-irsa.md) | Declarative vs. imperative tooling and the state file, why a reusable module never configures its own provider, hand-rolled vs. community modules, how IRSA gives one pod its own IAM identity, a real schema bug `terraform validate` caught, and why this phase stops at validate not apply |
+
 More get added as we build — each new one lands here the day it's created.

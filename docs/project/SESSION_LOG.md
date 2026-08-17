@@ -10,6 +10,88 @@ Newest entry first. One entry per work session (not necessarily per calendar day
 
 ---
 
+## 2026-08-17 — Phase 4 Day 17: the Terraform/AWS-EKS module, built and statically validated
+
+**What happened:**
+- Built `terraform/aws-eks/` per Section 11.6's full file layout: `versions.tf`,
+  `variables.tf`, `locals.tf`, `main.tf` (shared data sources only, no `provider`
+  block -- see its own comment for why a reusable module never configures one),
+  `outputs.tf`, `vpc.tf` (hand-rolled 2-tier VPC, public/private subnets across
+  `var.availability_zone_count` AZs, `cidrsubnet`-carved to never collide), `eks.tf`
+  (cluster + managed node group + the OIDC provider IRSA needs), `security_groups.tf`,
+  `rds.tf`, `elasticache.tf` (toggle: `enable_elasticache`), `s3.tf` (audit archive
+  bucket + Glacier lifecycle, Section 10.7), `kms.tf` (toggle: `enable_custom_kms`),
+  `iam.tf` (IRSA role for the gateway's ServiceAccount -- Secrets Manager read,
+  S3 archive read/write), `monitoring.tf` (CloudWatch log group + a representative
+  RDS alarm pair), and `examples/minimal/` (a real root module: EKS + RDS + S3 only,
+  ElastiCache/custom-KMS off, matching Section 11.6's own minimal-example scope).
+  Hand-rolled throughout, not the community `terraform-aws-modules/vpc`/`eks`
+  modules -- same "an external dependency buys nothing here" reasoning already
+  applied to the Helm chart's embedded Postgres/Redis.
+- RDS master password and the Redis AUTH token are both `random_password` resources
+  landing in Secrets Manager, never a plain variable -- the gateway's IRSA role is
+  scoped to read exactly those two secrets plus the audit-archive bucket, nothing
+  broader. `outputs.tf` exposes the Secrets Manager ARNs, never the raw secret
+  values.
+- **A real schema bug `terraform validate` caught immediately, no live AWS
+  needed:** `aws_eks_cluster`'s `encryption_config` block was written with a flat
+  `provider_key_arn` attribute (wrong recollection of the schema) -- the real shape
+  nests a `provider { key_arn = ... }` block inside `encryption_config`. Fixed,
+  re-validated clean.
+- Wrote `terraform/aws-eks/README.md`: usage, a cost breakdown (~$275-300/month at
+  this module's own realistic defaults before the kind of tradeoffs that get a real
+  deployer to Section 11.6's own ~$150-200 estimate), and a teardown-safety section
+  (`helm uninstall` before `terraform destroy` to avoid orphaned ELBs; the audit
+  archive bucket's `force_destroy = false` default explained; `skip_final_snapshot`
+  named as this module's own "cheap to tear down while learning it" choice, not a
+  production data-retention policy).
+- Added a `terraform` CI job (`.github/workflows/ci.yml`): `terraform fmt -check`
+  plus `terraform init -backend=false` + `terraform validate` for both the module
+  and `examples/minimal/` -- no AWS credentials configured in CI at all, so `plan`/
+  `apply` are structurally out of reach there; `validate` needs none, which matches
+  this phase's own deliberate scope exactly.
+- Added `concepts/36-terraform-and-irsa.md`: declarative vs. imperative tooling and
+  the state file, the reusable-module-never-configures-its-own-provider rule, why
+  hand-rolled over community modules, how IRSA actually works (the OIDC
+  trust-relationship mechanism, not just "it's like an instance profile but for
+  pods"), the `encryption_config` bug as a concrete example of what `validate` can
+  and can't catch, and the embedded-vs-external toggle pattern applied a third time.
+- Verified entirely statically, no live AWS touched: `terraform fmt -check
+  -recursive`, `terraform init -backend=false` + `terraform validate` for both the
+  module and the example root module -- all clean. No Python code changed this
+  session; the existing test suite is unaffected.
+
+**Decisions made:**
+- None new -- this session executed the "module-only, no live apply" scope already
+  confirmed before Phase 4 started (2026-08-13 (cont'd) entry).
+
+**Current state:**
+- Phase 4 Day 17 (Terraform module) is built and statically validated, matching
+  this phase's explicitly agreed scope. It has **not** been applied against real
+  AWS -- Section 14.8's own gate ("Terraform module tested against real EKS") is
+  not yet met, deliberately, pending a separate, explicit, cost-aware go-ahead.
+- Not yet committed at the time of writing.
+
+**Next steps:**
+1. Blog posts (Days 18-19) and the demo video -- support material (diagrams, data,
+   drafts to react to) in the owner's own voice, not ghostwritten wholesale.
+2. Day 20: release polish, v0.1.0 tag, Helm chart + image publishing.
+3. Whenever there's appetite for it: the live `terraform apply` → `helm install` →
+   smoke test → `terraform destroy` cycle this module was built for but hasn't run
+   yet -- real AWS cost starts the moment `apply` succeeds (README's own cost
+   section), so this needs its own explicit go-ahead, not an assumption carried
+   over from "module-only" scope already agreed.
+
+**Loose ends / reminders:**
+- Terraform module apply/destroy against real AWS is still fully unverified live --
+  everything checked this session is static (`fmt`, `validate`). Don't assume it
+  provisions a working cluster without that live check ever having happened.
+- Carried over, still open: Part 2 (control-plane persistence)'s in-cluster
+  verification; `interpose demo aml --run`'s audit-verification DB mismatch against
+  a remote gateway.
+
+---
+
 ## 2026-08-13 (cont'd) — Phase 4 scoped; Day 16, the real adversarial test suite, built and live-verified
 
 **What happened:**
