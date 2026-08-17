@@ -25,6 +25,31 @@ jobs:
       - run: helm lint charts/interpose -f charts/interpose/values-dev.yaml
       - run: helm template interpose charts/interpose -f charts/interpose/values-dev.yaml --set llm.groqApiKey=dummy
 
+  # Phase 4, Day 17 (docs/INTERPOSE_SCOPING.md Section 11.6). Static validation only,
+  # matching this phase's deliberate scope (docs/project/SESSION_LOG.md): no AWS
+  # credentials configured here, so `terraform plan`/`apply` are out of reach for CI
+  # entirely -- `terraform validate` needs none (it checks the configuration is
+  # internally consistent -- types, references, required arguments -- without
+  # calling any AWS API), which is exactly the level this phase's scope stops at.
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.5"
+      - run: terraform fmt -check -recursive terraform/
+      - name: terraform init + validate (module)
+        working-directory: terraform/aws-eks
+        run: |
+          terraform init -backend=false
+          terraform validate
+      - name: terraform init + validate (examples/minimal)
+        working-directory: terraform/aws-eks/examples/minimal
+        run: |
+          terraform init -backend=false
+          terraform validate
+
   test:
     runs-on: ubuntu-latest
     services:
