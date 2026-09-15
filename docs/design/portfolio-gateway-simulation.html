@@ -1,0 +1,721 @@
+<title>Interpose</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
+<style>
+  :root{
+    --bg:#0a0e14;
+    --panel:#10161d;
+    --panel-2:#141b23;
+    --line:#22303c;
+    --ink:#e7edf3;
+    --muted:#8a97a6;
+    --teal:#2fd6c0;
+    --teal-soft:rgba(47,214,192,.16);
+    --amber:#f2b84b;
+    --amber-soft:rgba(242,184,75,.16);
+    --rose:#ef5b70;
+    --rose-soft:rgba(239,91,112,.16);
+    --mono:'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans:'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--sans);
+    padding-block:40px;
+  }
+  .page{
+    max-width:1040px;
+    margin:0 auto;
+    padding-inline:20px;
+    display:flex;
+    flex-direction:column;
+    gap:22px;
+  }
+
+  .topbar{display:flex;flex-direction:column;gap:8px;}
+  .eyebrow{
+    font-family:var(--mono);
+    font-size:12px;
+    letter-spacing:.14em;
+    color:var(--teal);
+    text-transform:uppercase;
+  }
+  h1{
+    font-size:clamp(22px,3.4vw,30px);
+    font-weight:600;
+    margin:0;
+    text-wrap:balance;
+  }
+  .lede{
+    color:var(--muted);
+    font-size:15px;
+    max-width:62ch;
+    line-height:1.55;
+    margin:0;
+  }
+
+  .legend-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    flex-wrap:wrap;
+    gap:14px;
+    border-top:1px solid var(--line);
+    border-bottom:1px solid var(--line);
+    padding-block:14px;
+  }
+  .legend{display:flex;gap:18px;flex-wrap:wrap;}
+  .legend-item{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:12px;letter-spacing:.06em;color:var(--muted);text-transform:uppercase;}
+  .dot-swatch{width:9px;height:9px;border-radius:2px;display:inline-block;}
+  .sw-pass{background:var(--teal);}
+  .sw-hold{background:var(--amber);}
+  .sw-deny{background:var(--rose);}
+
+  .controls{display:flex;align-items:center;gap:10px;}
+  #playBtn{
+    font-family:var(--mono);
+    font-size:12px;
+    letter-spacing:.05em;
+    background:var(--panel-2);
+    color:var(--ink);
+    border:1px solid var(--line);
+    border-radius:6px;
+    padding:8px 14px;
+    cursor:pointer;
+  }
+  #playBtn:hover{border-color:var(--teal);}
+  #playBtn:focus-visible{outline:2px solid var(--teal);outline-offset:2px;}
+
+  .panel{
+    background:radial-gradient(120% 140% at 15% 0%, #141c26 0%, var(--panel) 55%);
+    border:1px solid var(--line);
+    border-radius:14px;
+    overflow:hidden;
+  }
+  .panel-chrome{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:10px 16px;
+    border-bottom:1px solid var(--line);
+  }
+  .chrome-dots{display:flex;gap:6px;}
+  .chrome-dots span{width:8px;height:8px;border-radius:50%;background:var(--line);}
+  .chrome-label{font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.05em;}
+
+  .stage-wrap{overflow-x:auto;padding:6px 10px 0;}
+  #stage{width:100%;min-width:760px;height:auto;display:block;}
+
+  .status-row{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    gap:16px;
+    flex-wrap:wrap;
+    padding:12px 20px 18px;
+  }
+  #statusLine{
+    font-family:var(--mono);
+    font-size:12.5px;
+    color:var(--teal);
+    letter-spacing:.02em;
+    font-variant-numeric:tabular-nums;
+  }
+  .hint{font-size:12px;color:var(--muted);margin:0;}
+
+  .stat-strip{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+    gap:1px;
+    background:var(--line);
+    border:1px solid var(--line);
+    border-radius:12px;
+    overflow:hidden;
+  }
+  .stat-tile{
+    background:var(--panel);
+    padding:16px 18px;
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+  }
+  .stat-label{
+    font-family:var(--mono);
+    font-size:10.5px;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    color:var(--muted);
+  }
+  .stat-value{
+    font-family:var(--mono);
+    font-size:19px;
+    font-weight:600;
+    font-variant-numeric:tabular-nums;
+    color:var(--ink);
+  }
+
+  #infoCard{
+    background:var(--panel);
+    border:1px solid var(--teal);
+    border-radius:12px;
+    padding:18px 20px;
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+  }
+  #infoCard[hidden]{display:none;}
+  #infoCard h3{margin:0;font-size:16px;font-weight:600;}
+  #infoCard p{margin:0;color:var(--muted);font-size:13.5px;line-height:1.55;}
+  #infoCard ul{margin:2px 0 0;padding:0;list-style:none;display:flex;gap:10px;flex-wrap:wrap;}
+  #infoCard li{
+    font-family:var(--mono);
+    font-size:11.5px;
+    color:var(--teal);
+    background:var(--teal-soft);
+    border-radius:5px;
+    padding:4px 9px;
+  }
+  #closeCard{
+    align-self:flex-end;
+    background:none;
+    border:none;
+    color:var(--muted);
+    font-family:var(--mono);
+    font-size:11px;
+    cursor:pointer;
+    padding:0;
+  }
+  #closeCard:hover{color:var(--ink);}
+
+  .tooltip{
+    position:fixed;
+    z-index:50;
+    max-width:250px;
+    background:var(--panel-2);
+    border:1px solid var(--line);
+    border-radius:8px;
+    padding:10px 12px;
+    pointer-events:none;
+    box-shadow:0 8px 24px rgba(0,0,0,.4);
+  }
+  .tooltip[hidden]{display:none;}
+  .tooltip strong{display:block;font-size:12.5px;margin-bottom:3px;color:var(--ink);}
+  .tooltip span{display:block;font-size:11.5px;color:var(--muted);line-height:1.4;}
+
+  /* diagram elements */
+  .hit-area{fill:transparent;}
+  [data-node]{cursor:pointer;}
+  .pulsable{transform-box:fill-box;transform-origin:center;}
+  .wire{fill:none;stroke:var(--line);stroke-width:2;}
+  .wire-pass{fill:none;stroke:var(--teal);stroke-width:2;opacity:.55;}
+  .wire-hold{fill:none;stroke:var(--amber);stroke-width:2;opacity:.55;}
+  .wire-deny{fill:none;stroke:var(--rose);stroke-width:2;opacity:.55;}
+  .trigger-wire{fill:none;stroke:var(--teal);stroke-width:1.5;stroke-dasharray:3 4;opacity:.12;}
+  .node-shape{fill:var(--panel-2);stroke:var(--line);stroke-width:1.6;}
+  .node-shape-accent{fill:var(--panel-2);stroke:var(--teal);stroke-width:1.6;}
+  .node-label{fill:var(--ink);font-family:var(--mono);font-size:11px;text-anchor:middle;}
+  .section-label{fill:var(--muted);font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-anchor:middle;text-transform:uppercase;}
+  .sub-label{fill:var(--muted);font-family:var(--mono);font-size:9px;text-anchor:middle;}
+  .cp-node{fill:var(--panel-2);stroke:var(--muted);stroke-width:1.4;}
+  .cp-label{fill:var(--muted);font-family:var(--mono);font-size:9px;text-anchor:middle;}
+  .dot{fill:var(--teal);}
+  .tick{opacity:0;}
+  .deny-x{opacity:0;stroke:var(--rose);stroke-width:2.5;stroke-linecap:round;}
+
+  .chain-completed{fill:var(--teal-soft);stroke:var(--teal);stroke-width:1.4;}
+  .chain-held{fill:var(--amber-soft);stroke:var(--amber);stroke-width:1.4;}
+  .chain-denied{fill:var(--rose-soft);stroke:var(--rose);stroke-width:1.4;}
+  .chain-label{fill:var(--ink);font-family:var(--mono);font-size:10.5px;text-anchor:middle;}
+  .genesis-rect{fill:rgba(138,151,166,.14);stroke:var(--muted);stroke-width:1.4;}
+
+  @media (max-width:520px){
+    .legend-row{flex-direction:column;align-items:flex-start;}
+  }
+</style>
+
+<div class="page">
+
+  <div class="topbar">
+    <span class="eyebrow">Interpose &middot; MCP audit &amp; policy gateway</span>
+    <h1>Live request simulation</h1>
+    <p class="lede">Every call an AI agent makes to a tool server passes through one governed choke point. Watch a request travel from agent to gateway to policy engine, branch into pass, human-hold, or deny, and land as a hash-chained audit entry.</p>
+  </div>
+
+  <div class="legend-row">
+    <div class="legend">
+      <span class="legend-item"><span class="dot-swatch sw-pass"></span>Pass</span>
+      <span class="legend-item"><span class="dot-swatch sw-hold"></span>Hold &rarr; human review</span>
+      <span class="legend-item"><span class="dot-swatch sw-deny"></span>Deny</span>
+    </div>
+    <div class="controls">
+      <button id="playBtn" type="button">&#9616;&#9616; Pause simulation</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-chrome">
+      <div class="chrome-dots"><span></span><span></span><span></span></div>
+      <span class="chrome-label">gateway.sim</span>
+    </div>
+    <div class="stage-wrap">
+      <svg id="stage" viewBox="0 0 1000 610" role="img" aria-label="Animated diagram of a tool call moving through the Interpose gateway, policy engine, and audit chain">
+        <defs>
+          <pattern id="gridPattern" width="26" height="26" patternUnits="userSpaceOnUse">
+            <circle cx="1" cy="1" r="1" fill="#ffffff" opacity="0.045"></circle>
+          </pattern>
+          <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+            <feGaussianBlur stdDeviation="3.4" result="blur"></feGaussianBlur>
+            <feMerge>
+              <feMergeNode in="blur"></feMergeNode>
+              <feMergeNode in="SourceGraphic"></feMergeNode>
+            </feMerge>
+          </filter>
+        </defs>
+
+        <rect x="0" y="0" width="1000" height="610" fill="url(#gridPattern)"></rect>
+
+        <!-- static wires -->
+        <path id="pathAgent1" class="wire" d="M92,210 C140,210 160,235 221,255"></path>
+        <path id="pathAgent2" class="wire" d="M92,300 C140,300 160,275 221,255"></path>
+        <path id="pathGatewayPolicy" class="wire" d="M289,255 C330,255 360,255 390,255"></path>
+        <path id="pathPass" class="wire-pass" d="M430,215 C500,130 610,140 700,205"></path>
+        <path id="pathHold" class="wire-hold" d="M430,295 C430,335 430,365 430,398"></path>
+        <path id="pathHoldServer" class="wire-hold" d="M455,400 C570,420 630,360 700,305"></path>
+        <path id="pathDeny" class="wire-deny" d="M390,255 C372,270 358,285 350,300"></path>
+        <path id="triggerWire" class="trigger-wire" d="M430,215 C420,150 370,100 336,75"></path>
+
+        <!-- control plane -->
+        <g id="controlplaneNode" data-node="controlplane">
+          <rect class="hit-area" x="296" y="36" width="392" height="66"></rect>
+          <text class="section-label" x="450" y="24">Control plane &mdash; async, off the hot path</text>
+          <line x1="342" y1="70" x2="378" y2="70" stroke="var(--line)" stroke-width="1.5"></line>
+          <line x1="402" y1="70" x2="438" y2="70" stroke="var(--line)" stroke-width="1.5"></line>
+          <line x1="462" y1="70" x2="498" y2="70" stroke="var(--line)" stroke-width="1.5"></line>
+          <line x1="522" y1="70" x2="558" y2="70" stroke="var(--line)" stroke-width="1.5"></line>
+          <line x1="582" y1="70" x2="638" y2="70" stroke="var(--line)" stroke-width="1.5"></line>
+          <circle id="cp1" class="cp-node pulsable" cx="330" cy="70" r="12"></circle>
+          <text class="cp-label" x="330" y="98">A0</text>
+          <circle id="cp2" class="cp-node pulsable" cx="390" cy="70" r="12"></circle>
+          <text class="cp-label" x="390" y="98">A1</text>
+          <circle id="cp3" class="cp-node pulsable" cx="450" cy="70" r="12"></circle>
+          <text class="cp-label" x="450" y="98">A2</text>
+          <circle id="cp4" class="cp-node pulsable" cx="510" cy="70" r="12"></circle>
+          <text class="cp-label" x="510" y="98">A3</text>
+          <circle id="cp5" class="cp-node pulsable" cx="570" cy="70" r="12"></circle>
+          <text class="cp-label" x="570" y="98">A4</text>
+          <rect id="dashboardGlyph" class="cp-node pulsable" x="638" y="58" width="28" height="24" rx="4"></rect>
+          <rect x="643" y="72" width="3" height="6" fill="var(--muted)"></rect>
+          <rect x="649" y="67" width="3" height="11" fill="var(--muted)"></rect>
+          <rect x="655" y="62" width="3" height="16" fill="var(--teal)"></rect>
+        </g>
+
+        <!-- agents -->
+        <g id="agentsNode" data-node="agents">
+          <rect class="hit-area" x="38" y="178" width="76" height="150"></rect>
+          <text class="section-label" x="76" y="165">Client agents</text>
+          <circle id="agent1Icon" class="node-shape pulsable" cx="70" cy="210" r="19"></circle>
+          <text class="sub-label" x="70" y="242">investigator</text>
+          <circle id="agent2Icon" class="node-shape pulsable" cx="70" cy="300" r="19"></circle>
+          <text class="sub-label" x="70" y="332">generic agent</text>
+        </g>
+
+        <!-- gateway -->
+        <g id="gatewayNode" data-node="gateway">
+          <circle class="hit-area" cx="255" cy="255" r="48"></circle>
+          <polygon id="gatewayHex" class="node-shape-accent pulsable" points="255,221 289,238 289,272 255,289 221,272 221,238"></polygon>
+          <text class="node-label" x="255" y="259">GW</text>
+          <text class="section-label" x="255" y="316">Gateway</text>
+        </g>
+
+        <!-- policy -->
+        <g id="policyNode" data-node="policy">
+          <circle class="hit-area" cx="430" cy="255" r="52"></circle>
+          <polygon id="policyDiamond" class="node-shape-accent pulsable" points="430,215 470,255 430,295 390,255"></polygon>
+          <text class="node-label" x="430" y="259" font-size="9">policy</text>
+          <text class="section-label" x="430" y="325">Policy engine</text>
+          <g id="denyMark">
+            <line class="deny-x" x1="343" y1="293" x2="357" y2="307"></line>
+            <line class="deny-x" x1="357" y1="293" x2="343" y2="307"></line>
+          </g>
+        </g>
+
+        <!-- reviewer -->
+        <g id="reviewerNode" data-node="reviewer">
+          <rect class="hit-area" x="378" y="376" width="104" height="48"></rect>
+          <text class="sub-label" x="430" y="372">hitl_gate</text>
+          <rect id="reviewerRect" class="node-shape pulsable" x="385" y="380" width="90" height="40" rx="8"></rect>
+          <text class="node-label" x="430" y="404" font-size="10">REVIEWER</text>
+          <text id="approvedTick" class="tick" x="430" y="405" text-anchor="middle" font-family="var(--mono)" font-size="13" fill="var(--teal)">&#10003;</text>
+        </g>
+
+        <!-- servers -->
+        <g id="serversNode" data-node="servers">
+          <rect class="hit-area" x="690" y="168" width="152" height="180"></rect>
+          <text class="section-label" x="766" y="158">Upstream MCP servers</text>
+          <rect id="serverCluster" class="node-shape pulsable" x="695" y="175" width="140" height="165" rx="14"></rect>
+          <rect x="705" y="195" width="120" height="38" rx="7" fill="var(--panel)" stroke="var(--line)"></rect>
+          <text class="sub-label" x="765" y="219" font-size="10">ofac-sanctions</text>
+          <rect x="705" y="283" width="120" height="38" rx="7" fill="var(--panel)" stroke="var(--line)"></rect>
+          <text class="sub-label" x="765" y="307" font-size="10">transaction-graph</text>
+        </g>
+
+        <!-- audit chain -->
+        <g id="chainNode" data-node="chain">
+          <rect class="hit-area" x="80" y="470" width="660" height="60"></rect>
+          <text class="section-label" x="410" y="462">Audit log &mdash; SHA-256 hash-chained</text>
+          <line x1="95" y1="500" x2="735" y2="500" stroke="var(--line)" stroke-width="1.4"></line>
+          <g id="genesisBlock" transform="translate(110,500)">
+            <rect class="genesis-rect" x="-26" y="-18" width="52" height="36" rx="6"></rect>
+            <text class="chain-label" x="0" y="5" font-size="9">GENESIS</text>
+          </g>
+          <g id="chainSlots"></g>
+        </g>
+
+        <!-- moving dots layer, kept last so dots render above wires -->
+        <g id="dotLayer"></g>
+      </svg>
+    </div>
+
+    <div class="status-row">
+      <span id="statusLine">booting simulation&hellip;</span>
+      <p class="hint">Hover a node for details &middot; click to pin it below</p>
+    </div>
+  </div>
+
+  <div class="stat-strip">
+    <div class="stat-tile"><span class="stat-label">Policy types</span><span class="stat-value">8</span></div>
+    <div class="stat-tile"><span class="stat-label">Control-plane agents</span><span class="stat-value">5</span></div>
+    <div class="stat-tile"><span class="stat-label">Sanctions entries</span><span class="stat-value">19,169</span></div>
+    <div class="stat-tile"><span class="stat-label">Transactions modeled</span><span class="stat-value">3.16M</span></div>
+    <div class="stat-tile"><span class="stat-label">Tests</span><span class="stat-value">327</span></div>
+    <div class="stat-tile"><span class="stat-label">Attack classes defended</span><span class="stat-value">6 / 6</span></div>
+  </div>
+
+  <div id="infoCard" hidden>
+    <button id="closeCard" type="button">close &times;</button>
+    <h3 id="infoTitle"></h3>
+    <p id="infoBody"></p>
+    <ul id="infoStats"></ul>
+  </div>
+
+</div>
+
+<div id="tooltip" class="tooltip" hidden>
+  <strong id="ttTitle"></strong>
+  <span id="ttBody"></span>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/MotionPathPlugin.min.js"></script>
+<script>
+(function(){
+  gsap.registerPlugin(MotionPathPlugin);
+
+  var svg = document.getElementById('stage');
+  var dotLayer = document.getElementById('dotLayer');
+  var chainSlots = document.getElementById('chainSlots');
+  var statusLine = document.getElementById('statusLine');
+  var playBtn = document.getElementById('playBtn');
+  var tooltip = document.getElementById('tooltip');
+  var ttTitle = document.getElementById('ttTitle');
+  var ttBody = document.getElementById('ttBody');
+  var infoCard = document.getElementById('infoCard');
+  var infoTitle = document.getElementById('infoTitle');
+  var infoBody = document.getElementById('infoBody');
+  var infoStats = document.getElementById('infoStats');
+  var closeCard = document.getElementById('closeCard');
+
+  var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var playing = false;
+  var looping = false;
+  var cycleCount = 0;
+  var chainBlocks = [];
+  var pinnedNode = null;
+
+  var nodeInfo = {
+    agents: {
+      title: 'Client agents',
+      body: 'Any MCP client can call through the gateway unmodified — a generic agent, or the AML investigator agent, a 5-node LangGraph client that drives real investigations through Interpose.',
+      stats: ['Zero server-side changes required']
+    },
+    gateway: {
+      title: 'Gateway',
+      body: 'One FastAPI proxy route handles every tools/call, regardless of which agent framework built the caller or which team owns the upstream server.',
+      stats: ['1 proxy route', 'GET / POST / DELETE']
+    },
+    policy: {
+      title: 'Policy engine',
+      body: 'Compiles and evaluates a policy set in a fixed order — allowlist, denylist, rate_limit, custom, hitl_gate — fail-closed to DENY on any evaluation error.',
+      stats: ['8 effect types', 'Fail-closed by default']
+    },
+    reviewer: {
+      title: 'Human-in-the-loop',
+      body: 'A HOLD opens a real Redis-backed ticket and blocks that one request — asynchronously, other traffic keeps flowing — until a reviewer approves, denies, or the timeout fires.',
+      stats: ['Redis ticket queue', 'Blocks one request only']
+    },
+    servers: {
+      title: 'Upstream MCP servers',
+      body: 'Two real, standalone servers sit behind the gateway with zero dependency on it: a live U.S. Treasury OFAC sanctions list, and a transaction graph queried over Parquet.',
+      stats: ['19,169 sanctions entries', '3.16M transactions']
+    },
+    controlplane: {
+      title: 'Control plane',
+      body: 'Five LangGraph agents run off the gateway’s hot path — scoring session risk, flagging statistical anomalies, composing reviewer narratives, and promoting repeated denials to incidents.',
+      stats: ['5 agents', 'Conditional routing', 'Never blocks the gateway']
+    },
+    chain: {
+      title: 'Audit log',
+      body: 'Every decision is written as a SHA-256 hash-chained entry, linked back to a fixed genesis hash. Tampering with any past entry is detectable by walking the chain forward.',
+      stats: ['Hash-chained', 'Tamper-evident']
+    }
+  };
+
+  function pad(n){ return String(n).padStart(3,'0'); }
+  function wait(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
+  function setStatus(text){ statusLine.textContent = text; }
+
+  function pulse(sel){
+    gsap.timeline()
+      .to(sel, {scale:1.18, duration:0.16, ease:'power1.out'})
+      .to(sel, {scale:1, duration:0.3, ease:'power1.inOut'});
+  }
+
+  function flicker(sel){
+    return new Promise(function(res){
+      gsap.timeline({onComplete:res})
+        .to(sel, {filter:'brightness(1.9)', duration:0.11})
+        .to(sel, {filter:'brightness(1)', duration:0.11})
+        .to(sel, {filter:'brightness(1.9)', duration:0.11})
+        .to(sel, {filter:'brightness(1)', duration:0.11});
+    });
+  }
+
+  function spawnDot(){
+    var el = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    el.setAttribute('class','dot');
+    el.setAttribute('r','7');
+    el.setAttribute('filter','url(#glow)');
+    el.setAttribute('opacity','0');
+    dotLayer.appendChild(el);
+    gsap.to(el, {opacity:1, duration:0.2});
+    return el;
+  }
+
+  function fadeOutDot(el){
+    gsap.to(el, {opacity:0, duration:0.35, onComplete:function(){ el.remove(); }});
+  }
+
+  function travel(el, pathSel, duration){
+    return new Promise(function(res){
+      gsap.to(el, {
+        duration: duration,
+        ease: 'power1.inOut',
+        motionPath: { path: pathSel, align: pathSel, alignOrigin:[0.5,0.5], autoRotate:false },
+        onComplete: res
+      });
+    });
+  }
+
+  function showDenyMark(){
+    gsap.timeline()
+      .to('#denyMark', {opacity:1, duration:0.15})
+      .to('#denyMark', {opacity:0, duration:0.4, delay:0.5});
+  }
+
+  function showApprovedTick(){
+    gsap.timeline()
+      .to('#approvedTick', {opacity:1, duration:0.15})
+      .to('#approvedTick', {opacity:0, duration:0.4, delay:0.6});
+  }
+
+  function triggerControlPlane(){
+    var nodes = ['#cp1','#cp2','#cp3','#cp4','#cp5'];
+    var tl = gsap.timeline();
+    nodes.forEach(function(sel, i){
+      tl.to(sel, {scale:1.35, duration:0.16, ease:'power1.out'}, i*0.13)
+        .to(sel, {scale:1, duration:0.22}, i*0.13+0.16);
+    });
+    tl.to('#dashboardGlyph', {scale:1.3, duration:0.18}, '-=0.05')
+      .to('#dashboardGlyph', {scale:1, duration:0.28});
+    gsap.timeline()
+      .to('#triggerWire', {opacity:0.85, duration:0.2})
+      .to('#triggerWire', {opacity:0.12, duration:0.7, delay:0.5});
+  }
+
+  function slotX(i){ return 190 + i*70; }
+
+  function renderChain(){
+    chainSlots.innerHTML = '';
+    chainBlocks.forEach(function(status, i){
+      var g = document.createElementNS('http://www.w3.org/2000/svg','g');
+      g.setAttribute('class','pulsable');
+      g.setAttribute('transform', 'translate(' + slotX(i) + ',500)');
+      var cls = status === 'COMPLETED' ? 'chain-completed' : status === 'HELD' ? 'chain-held' : 'chain-denied';
+      var short = status.slice(0,4);
+      g.innerHTML =
+        '<rect class="' + cls + '" x="-27" y="-18" width="54" height="36" rx="6"></rect>' +
+        '<text class="chain-label" x="0" y="4">' + short + '</text>';
+      chainSlots.appendChild(g);
+      if (i === chainBlocks.length - 1) {
+        gsap.fromTo(g, {scale:0, opacity:0}, {scale:1, opacity:1, duration:0.4, ease:'back.out(2.2)'});
+      }
+    });
+  }
+
+  function addChainBlock(status){
+    chainBlocks.push(status);
+    if (chainBlocks.length > 8) chainBlocks.shift();
+    renderChain();
+  }
+
+  function verifySweep(){
+    var targets = [document.querySelector('#genesisBlock rect')].concat(
+      Array.prototype.slice.call(chainSlots.querySelectorAll('rect'))
+    );
+    gsap.timeline()
+      .to(targets, {stroke:'#7cf3e2', strokeWidth:2.6, duration:0.1, stagger:0.05})
+      .to(targets, {strokeWidth:1.4, duration:0.5, stagger:0.03}, '+=0.15');
+  }
+
+  function pickOutcome(){
+    var r = Math.random();
+    if (r < 0.5) return 'PASS';
+    if (r < 0.85) return 'HOLD';
+    return 'DENY';
+  }
+
+  async function runCycle(){
+    cycleCount++;
+    var fromFirst = Math.random() < 0.5;
+    var agentLabel = fromFirst ? 'investigator' : 'generic-agent';
+    var agentIconSel = fromFirst ? '#agent1Icon' : '#agent2Icon';
+    var agentPath = fromFirst ? '#pathAgent1' : '#pathAgent2';
+
+    setStatus('cycle ' + pad(cycleCount) + ' — ' + agentLabel + ' calling gateway…');
+    pulse(agentIconSel);
+
+    var dot = spawnDot();
+    await travel(dot, agentPath, 0.8);
+    pulse('#gatewayHex');
+    await travel(dot, '#pathGatewayPolicy', 0.5);
+
+    setStatus('cycle ' + pad(cycleCount) + ' — policy engine evaluating…');
+    await flicker('#policyDiamond');
+
+    var outcome = pickOutcome();
+
+    if (outcome === 'PASS') {
+      setStatus('cycle ' + pad(cycleCount) + ' — PASS → forwarding to upstream…');
+      await travel(dot, '#pathPass', 1.0);
+      pulse('#serverCluster');
+      addChainBlock('COMPLETED');
+      setStatus('cycle ' + pad(cycleCount) + ' — COMPLETED, audit entry appended');
+      if (Math.random() < 0.3) triggerControlPlane();
+
+    } else if (outcome === 'HOLD') {
+      setStatus('cycle ' + pad(cycleCount) + ' — HOLD → ticket opened, awaiting reviewer…');
+      await travel(dot, '#pathHold', 0.7);
+      addChainBlock('HELD');
+      triggerControlPlane();
+      await wait(850);
+      showApprovedTick();
+      setStatus('cycle ' + pad(cycleCount) + ' — approved → forwarding…');
+      await travel(dot, '#pathHoldServer', 0.85);
+      pulse('#serverCluster');
+      addChainBlock('COMPLETED');
+      setStatus('cycle ' + pad(cycleCount) + ' — COMPLETED, audit entry appended');
+
+    } else {
+      setStatus('cycle ' + pad(cycleCount) + ' — DENY → policy_denied (-32001)');
+      await travel(dot, '#pathDeny', 0.5);
+      showDenyMark();
+      addChainBlock('DENIED');
+      triggerControlPlane();
+    }
+
+    fadeOutDot(dot);
+    if (cycleCount % 5 === 0) verifySweep();
+    await wait(500);
+  }
+
+  async function loopStep(){
+    if (!playing) { looping = false; return; }
+    looping = true;
+    await runCycle();
+    if (playing) {
+      loopStep();
+    } else {
+      looping = false;
+    }
+  }
+
+  function startLoop(){
+    playing = true;
+    playBtn.textContent = '▐▐ Pause simulation';
+    if (!looping) loopStep();
+  }
+
+  function stopLoop(){
+    playing = false;
+    playBtn.textContent = '▶ Run simulation';
+  }
+
+  playBtn.addEventListener('click', function(){
+    if (playing) stopLoop(); else startLoop();
+  });
+
+  if (reducedMotion) {
+    stopLoop();
+    setStatus('simulation paused — press run to step through one cycle');
+  } else {
+    startLoop();
+  }
+
+  function closestNode(el){
+    while (el && el !== svg) {
+      if (el.dataset && el.dataset.node) return el.dataset.node;
+      el = el.parentNode;
+    }
+    return null;
+  }
+
+  svg.addEventListener('pointermove', function(e){
+    var key = closestNode(e.target);
+    if (key) {
+      var info = nodeInfo[key];
+      ttTitle.textContent = info.title;
+      ttBody.textContent = info.body;
+      tooltip.hidden = false;
+      var x = e.clientX + 16;
+      var y = e.clientY + 16;
+      var maxX = window.innerWidth - 270;
+      if (x > maxX) x = e.clientX - 266;
+      tooltip.style.left = x + 'px';
+      tooltip.style.top = y + 'px';
+    } else {
+      tooltip.hidden = true;
+    }
+  });
+
+  svg.addEventListener('pointerleave', function(){ tooltip.hidden = true; });
+
+  svg.addEventListener('click', function(e){
+    var key = closestNode(e.target);
+    if (!key) return;
+    var info = nodeInfo[key];
+    infoTitle.textContent = info.title;
+    infoBody.textContent = info.body;
+    infoStats.innerHTML = info.stats.map(function(s){ return '<li>' + s + '</li>'; }).join('');
+    infoCard.hidden = false;
+    pinnedNode = key;
+  });
+
+  closeCard.addEventListener('click', function(){
+    infoCard.hidden = true;
+    pinnedNode = null;
+  });
+})();
+</script>

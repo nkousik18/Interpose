@@ -11,11 +11,11 @@
 
 ## Table of Contents
 
-1. Executive Summary
-2. Problem Statement & Market Context
-3. Target Audiences & Value Proposition
-4. Goals, Non-Goals & Success Metrics
-5. Solution Overview
+  1. Executive Summary
+  2. Problem Statement & Market Context
+  3. Target Audiences & Value Proposition
+  4. Goals, Non-Goals & Success Metrics
+  5. Solution Overview
 6. Technical Architecture
 7. Multi-Agent Design (LangGraph)
 8. MCP Integration Strategy *(next)*
